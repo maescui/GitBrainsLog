@@ -1,0 +1,16 @@
+# Dependencias y compilación (se regeneran con npm install / npm run compile)
+node_modules/
+out/
+*.vsix
+*.tsbuildinfo
+
+# Ajustes personales de VS Code (launch.json y tasks.json sí se comparten: F5 y compilar)
+.vscode/settings.json
+.vscode-test/
+
+# Logs y restos
+npm-debug.log*
+*.log
+.DS_Store
+Thumbs.db
+

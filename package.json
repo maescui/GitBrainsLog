@@ -1,0 +1,206 @@
+{
+  "name": "gitbrainslog",
+  "displayName": "GitBrainsLog",
+  "description": "Panel de Git Log al estilo de los IDE de JetBrains: ramas, grafo de commits, detalles y menú contextual.",
+  "version": "1.0.0",
+  "publisher": "local",
+  "icon": "GitBrainsLog_Logo.png",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/maescui/GitBrainsLog.git"
+  },
+  "bugs": {
+    "url": "https://github.com/maescui/GitBrainsLog/issues"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "SCM Providers",
+    "Visualization"
+  ],
+  "activationEvents": [
+    "workspaceContains:.git",
+    "workspaceContains:*/.git",
+    "workspaceContains:*/*/.git"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "jbGit",
+          "title": "Git Log",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "jbGit": [
+        {
+          "type": "webview",
+          "id": "jbGit.log",
+          "name": "Log"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "jbGit.refresh",
+        "title": "Refresh",
+        "category": "Git Log",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "jbGit.focus",
+        "title": "Show Git Log",
+        "category": "Git Log"
+      },
+      {
+        "command": "jbGit.showHistory",
+        "title": "Show History",
+        "category": "Git Log"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "jbGit.showHistory",
+          "when": "resourceScheme == file",
+          "group": "7_jbgit@1"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "jbGit.showHistory",
+          "when": "resourceScheme == file",
+          "group": "2_jbgit@1"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "jbGit.showHistory",
+          "when": "resourceScheme == file",
+          "group": "9_jbgit@1"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "jbGit.refresh",
+          "when": "view == jbGit.log",
+          "group": "navigation@2"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "jbGit.focus",
+        "key": "alt+9",
+        "mac": "cmd+9"
+      }
+    ],
+    "configuration": {
+      "title": "GitBrainsLog",
+      "properties": {
+        "jbGit.maxCommits": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 100,
+          "maximum": 10000,
+          "description": "Número de commits que se cargan de una vez, entre 100 y 10000 (se puede ampliar con «Load more»)."
+        },
+        "jbGit.repositoryScanMaxDepth": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "maximum": 5,
+          "description": "Niveles de subcarpetas en los que se buscan repositorios Git, contados desde la carpeta abierta o desde cada repositorio encontrado (submódulos y repos anidados), entre 0 y 5. 0 = solo la carpeta abierta."
+        },
+        "jbGit.autoStage": {
+          "type": "boolean",
+          "default": true,
+          "description": "Añade al stage automáticamente los cambios de archivos con seguimiento, como JetBrains incluye todos los cambios en el commit. Los que se quitan con «−» se quedan fuera hasta que se vuelvan a añadir. Los archivos sin seguimiento no se añaden solos."
+        },
+        "jbGit.protectedBranches": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "main",
+            "master"
+          ],
+          "description": "Ramas protegidas (como en JetBrains): su rama remota (origin/main…) lleva un candado en el árbol y no se puede borrar desde la extensión."
+        },
+        "jbGit.folderColors": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {
+            "bugfix": "red",
+            "feature": "blue",
+            "release": "yellow",
+            "hotfix": "orange",
+            "@remote": "foreground"
+          },
+          "description": "Color del icono de las carpetas del árbol de ramas, por nombre de carpeta. «@remote» es la nube de cada remoto (origin…). Valores: red, orange, yellow, green, blue, purple, foreground, gray-light, gray, gray-dark o un color #rrggbb. Las carpetas que no están aquí salen en gris."
+        },
+        "jbGit.fontFamily": {
+          "type": "string",
+          "default": "",
+          "description": "Fuente de la interfaz de la extensión (lista CSS, p. ej. «Inter, sans-serif»). Vacío = la de VS Code."
+        },
+        "jbGit.fontSize": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 32,
+          "description": "Tamaño de la fuente de la interfaz en px (8–32). 0 = el de VS Code."
+        },
+        "jbGit.shortcuts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Atajos de las acciones de los menús contextuales (se editan en la pestaña Settings ▸ Keyboard Shortcuts). Clave «vista.acción» (p. ej. «branches.copyName»), valor la combinación («Ctrl+Shift+C», «Delete», «F2») o vacío para quitar uno por defecto. Solo se guardan los que cambian."
+        },
+        "jbGit.tagColor": {
+          "type": "string",
+          "default": "yellow",
+          "description": "Color de los tags (icono en el árbol de ramas y etiquetas del log). Valores: red, orange, yellow, green, blue, purple, foreground, gray-light, gray, gray-dark o un color #rrggbb."
+        },
+        "jbGit.branchColors": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Color del carril de cada rama en el grafo del log, por nombre de rama (sin el remoto: «feature/x» vale para la local y para origin/feature/x, en todos los repos). Valores #rrggbb. Las que no están aquí toman un color fijo según su nombre (main y master, amarillo)."
+        },
+        "jbGit.dateFormat": {
+          "type": "string",
+          "enum": [
+            "relative",
+            "absolute"
+          ],
+          "default": "absolute",
+          "description": "Formato de la fecha en la tabla de commits."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "tsc -p ./ && node --test --test-reporter=spec --test-concurrency=4 \"out/test/**/*.test.js\"",
+    "package": "npx @vscode/vsce package --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  }
+}

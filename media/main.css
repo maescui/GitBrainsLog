@@ -1,0 +1,1070 @@
+:root {
+  --row-h: calc(var(--fs) + 11px);
+  /* Tamaño de letra de la interfaz: las alturas de filas, barras y controles crecen con él */
+  --fs: var(--jb-font-size, var(--vscode-font-size, 13px));
+  --border: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+  --muted: var(--vscode-descriptionForeground);
+  --c-local: var(--vscode-charts-yellow, #d9a441);
+  --c-remote: var(--vscode-charts-purple, #b180d7);
+  --c-tag: var(--vscode-charts-yellow, #cca700);   /* jbGit.tagColor (applyTagColor) */
+  --c-head: var(--vscode-charts-orange, #e08a3c);
+  --c-push: var(--vscode-charts-green, #5faf6e);
+  --c-pull: var(--vscode-charts-blue, #4f9fe0);
+  --c-fav: var(--vscode-charts-yellow, #e2c541);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  color: var(--vscode-foreground);
+  font-family: var(--jb-font, var(--vscode-font-family));
+  font-size: var(--jb-font-size, var(--vscode-font-size, 13px));
+  user-select: none;
+}
+
+/* Los controles no heredan la fuente por defecto: así usan la de Settings ▸ Fonts */
+button, input { font: inherit; color: inherit; }
+select, textarea { font: inherit; }
+
+.hidden { display: none !important; }
+
+/* ---------- pestañas (Log / Local Changes) ---------- */
+
+#tabs {
+  height: calc(var(--fs) + 17px);
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tab:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); }
+.tab.active { color: var(--vscode-foreground); box-shadow: inset 0 -2px 0 var(--vscode-focusBorder); }
+.tab { position: relative; }
+.tab.dragging { opacity: 0.5; }
+/* Marca de dónde caerá la pestaña al soltarla */
+.tab.drop-before::before, .tab.drop-after::after {
+  content: "";
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  width: 2px;
+  background: var(--vscode-focusBorder);
+}
+.tab.drop-before::before { left: -2px; }
+.tab.drop-after::after { right: -2px; }
+.tab:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.tab-count:empty { display: none; }
+.tab-count {
+  min-width: 18px;
+  height: calc(var(--fs) + 3px);
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 2px);
+  line-height: calc(var(--fs) + 3px);
+  text-align: center;
+}
+
+body { display: flex; flex-direction: column; }
+#tabs { flex: none; }
+#app { display: flex; flex: 1 1 auto; min-height: 0; }
+
+/* Barra de operación a medias (rebase, merge…) bajo las pestañas */
+#op-bar { flex: none; border-bottom: 1px solid var(--border); background: var(--vscode-inputValidation-warningBackground, color-mix(in srgb, var(--vscode-charts-yellow, #cca700) 14%, transparent)); }
+.op-line { display: flex; align-items: center; gap: 8px; min-height: calc(var(--fs) + 17px); padding: 2px 10px; flex-wrap: wrap; }
+.op-icon { display: flex; color: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow, #cca700)); }
+.op-text { font-weight: 600; }
+.op-conflicts { color: var(--vscode-gitDecoration-conflictingResourceForeground, var(--vscode-errorForeground)); }
+.op-ok { color: var(--vscode-gitDecoration-addedResourceForeground, var(--vscode-charts-green)); }
+.op-line .btn { height: calc(var(--fs) + 9px); padding: 0 10px; }
+.op-line .spacer { flex: 1 1 auto; }
+.view { display: flex; flex: 1 1 auto; min-width: 0; }
+
+.pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+#branches { flex: none; width: 220px; }
+
+/* Barra vertical de acciones Git, como la de JetBrains a la izquierda del log */
+#git-actions {
+  flex: none;
+  width: 30px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding-top: 4px;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+#git-actions::-webkit-scrollbar { display: none; }
+#git-actions .icon-btn:disabled { opacity: 0.35; cursor: default; background: transparent; }
+#git-actions .sep { width: 16px; height: 1px; margin: 3px 0; background: var(--border); }
+#git-actions .act-pull { color: var(--c-pull); }
+#git-actions .act-push { color: var(--c-push); }
+#git-actions .act-fav.filled { color: var(--c-fav); }
+#log { flex: 1 1 auto; }
+#details { flex: none; width: 340px; }
+#changes { flex: none; width: 420px; }
+#change-preview { flex: 1 1 auto; }
+#stash { flex: 1 1 auto; }
+#stash-files { flex: none; width: 340px; }
+#commit-box {
+  flex: none;
+  height: 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+}
+
+.scroll { flex: 1 1 auto; overflow: auto; min-height: 0; outline: none; }
+
+/* ---------- toolbar ---------- */
+
+.toolbar {
+  flex: none;
+  height: calc(var(--fs) + 19px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--border);
+}
+.toolbar .spacer { flex: 1; }
+.details-toolbar .details-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 1px); padding-left: 4px; }
+/* Con poco sitio (letra grande o panel estrecho) cede primero el buscador y luego los filtros */
+.toolbar .search { flex: 0 10 280px; min-width: calc(var(--fs) * 5); }
+
+input[type="text"] {
+  width: 100%;
+  height: calc(var(--fs) + 11px);
+  padding: 0 8px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 3px;
+  outline: none;
+}
+input[type="text"]::placeholder { color: var(--vscode-input-placeholderForeground); }
+input[type="text"]:focus { border-color: var(--vscode-focusBorder); }
+
+.icon-btn {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--vscode-icon-foreground, var(--vscode-foreground));
+}
+.icon-btn:hover { background: var(--vscode-toolbar-hoverBackground); }
+.icon-btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+
+/* ---------- filtros del log (Branch, User, Date, Paths) ---------- */
+
+.filters { display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; }
+.filter { flex: none; display: inline-flex; align-items: center; height: calc(var(--fs) + 9px); border-radius: 4px; max-width: 220px; }
+.filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: calc(var(--fs) + 9px);
+  min-width: 0;
+  padding: 0 6px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.filter-btn:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-foreground); }
+.filter-btn:focus-visible, .filter-clear:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+.filter-btn .chev { flex: none; opacity: 0.8; }
+.filter-btn .fv { overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+/* Filtro activo: resaltado y con su ✕ para quitarlo */
+.filter.active { background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
+.filter.active .filter-btn { color: inherit; padding-right: 2px; }
+.filter.active .filter-btn:hover { background: transparent; }
+.filter-clear {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-right: 2px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.filter-clear:hover { background: rgba(128, 128, 128, 0.3); }
+
+/* ---------- splitters ---------- */
+
+.splitter {
+  flex: none;
+  width: 5px;
+  margin: 0 -2px;
+  z-index: 2;
+  cursor: col-resize;
+  position: relative;
+}
+.splitter::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+}
+.splitter:hover::after, .splitter.dragging::after,
+.hsplitter:hover::after, .hsplitter.dragging::after {
+  background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder));
+  width: 3px;
+  left: 1px;
+}
+.hsplitter {
+  flex: none;
+  height: 5px;
+  margin: -2px 0;
+  z-index: 2;
+  cursor: row-resize;
+  position: relative;
+}
+.hsplitter::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--border);
+}
+.hsplitter:hover::after, .hsplitter.dragging::after { height: 3px; top: 1px; width: auto; left: 0; }
+
+/* ---------- trees (ramas y archivos) ---------- */
+
+.tnode {
+  height: calc(var(--fs) + 9px);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 8px;
+  white-space: nowrap;
+  cursor: default;
+}
+.tnode:hover { background: var(--vscode-list-hoverBackground); }
+.tnode.selected { background: var(--vscode-list-inactiveSelectionBackground); }
+.scroll:focus .tnode.selected {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+.tnode .twisty {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--vscode-icon-foreground, var(--vscode-foreground));
+}
+.tnode .twisty svg { transition: transform 0.1s ease; }
+.tnode .twisty.open svg { transform: rotate(90deg); }
+.tnode .label { overflow: hidden; text-overflow: ellipsis; }
+.tnode .hint { color: var(--muted); font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 2px); margin-left: 4px; }
+.tnode .hint .sync-push { color: var(--c-push); }
+.tnode .hint .sync-pull { color: var(--c-pull); }
+.tnode.current .label { font-weight: 600; }
+.tnode.filtered { box-shadow: inset 2px 0 0 var(--vscode-focusBorder); }
+.tnode svg { flex: none; display: block; }
+/* Los iconos van dentro de un <span>: sin esto el SVG se apoya en la línea base del
+   texto y queda 2px por encima del centro de la fila */
+.tnode > span:not(.label):not(.hint) { flex: none; display: flex; align-items: center; }
+
+.ico-local { color: var(--c-local); }
+.ico-remote { color: var(--c-remote); }
+.ico-tag { color: var(--c-tag); }
+.ico-head { color: var(--c-head); }
+.ico-fav { color: var(--c-fav); }
+.tnode .ico-lock { color: var(--muted); margin-left: 2px; }
+.tnode .ico-lock svg { width: 12px; height: 12px; }
+.ico-folder { color: var(--muted); }
+
+/* ---------- log ---------- */
+
+#log-list { position: relative; }
+#log-inner { position: relative; }
+
+.row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--row-h);
+  display: grid;
+  /* columnas según el ojo del Log (applyLogView): asunto, autor, hash y fecha */
+  grid-template-columns: var(--log-cols, minmax(0, 1fr) minmax(80px, 160px) minmax(110px, 150px));
+  align-items: center;
+  white-space: nowrap;
+  cursor: default;
+}
+.row:hover { background: var(--vscode-list-hoverBackground); }
+.row.selected { background: var(--vscode-list-inactiveSelectionBackground); }
+#log-list:focus .row.selected {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+#log-list:focus .row.selected .c-author,
+#log-list:focus .row.selected .c-date { color: inherit; }
+.row.unreachable .subject { color: var(--muted); }
+.row.unreachable .refs { opacity: .6; }
+/* Highlight del ojo del Log */
+.row.mine .subject { font-weight: 600; }
+.row.merge .subject { color: var(--muted); font-style: italic; }
+.c-hash { color: var(--muted); padding: 0 10px; font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 1px); overflow: hidden; }
+#log-list.no-author .c-author, #log-list.no-date .c-date, #log-list.no-hash .c-hash,
+.log-preview.no-author .c-author, .log-preview.no-date .c-date, .log-preview.no-hash .c-hash { display: none; }
+#log-list:focus .row.selected .c-hash { color: inherit; }
+.ref.more { color: var(--muted); }
+
+.c-subject { display: flex; align-items: center; min-width: 0; height: 100%; overflow: hidden; }
+.c-subject .g-jump { cursor: pointer; }
+.c-subject svg { flex: none; overflow: visible; }
+.c-subject .subject { flex: 1 1 0; min-width: 40px; overflow: hidden; text-overflow: ellipsis; padding-left: 4px; }
+/* Show Columns ▸ Commit Message desactivado: solo el grafo y las etiquetas */
+#log-list.no-subject .c-subject .subject, .log-preview.no-subject .c-subject .subject { display: none; }
+#log-list.no-subject .c-subject .refs, .log-preview.no-subject .c-subject .refs { max-width: none; }
+.row.head .subject { font-weight: 600; }
+.c-author, .c-date { color: var(--muted); padding: 0 10px; overflow: hidden; text-overflow: ellipsis; }
+
+.refs { flex: 0 1 auto; min-width: 0; display: flex; gap: 6px; padding: 0 6px; max-width: 45%; overflow: hidden; }
+.ref {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: 3px;
+  font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 2px);
+  line-height: calc(var(--fs) + 3px);
+  white-space: nowrap;
+}
+.ref svg { flex: none; }
+.ref-l { overflow: hidden; text-overflow: ellipsis; }
+.ref.more { flex: none; }
+.ref.local { color: var(--ref-c, var(--c-local)); }
+.ref.remote { color: var(--ref-c, var(--c-remote)); }
+.ref.tag { color: var(--c-tag); }
+.ref.current { color: var(--c-head); font-weight: 600; }
+#log-list:focus .row.selected .ref { color: inherit; }
+
+.load-more {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--row-h);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.link-btn {
+  border: none;
+  background: transparent;
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+  padding: 0;
+}
+.link-btn:hover { text-decoration: underline; }
+.link-btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+
+.empty {
+  padding: 24px 16px;
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 60ch;
+}
+.empty strong { color: var(--vscode-foreground); font-weight: 600; }
+.empty.error { color: var(--vscode-errorForeground); white-space: pre-wrap; }
+
+/* ---------- detalles ---------- */
+
+#files { flex: 1 1 50%; }
+#commit-info { flex: 1 1 50%; padding: 10px 12px 16px; user-select: text; }
+
+.st-A { color: var(--vscode-gitDecoration-addedResourceForeground); }
+.st-M, .st-T { color: var(--vscode-gitDecoration-modifiedResourceForeground); }
+.st-D { color: var(--vscode-gitDecoration-deletedResourceForeground); text-decoration: line-through; }
+.st-R, .st-C { color: var(--vscode-gitDecoration-renamedResourceForeground); }
+.st-Q { color: var(--vscode-gitDecoration-untrackedResourceForeground); }
+.st-U { color: var(--vscode-gitDecoration-conflictingResourceForeground); }
+
+/* ---------- Local Changes ---------- */
+
+.toolbar .icon-btn:disabled { opacity: 0.35; cursor: default; background: transparent; }
+.muted { color: var(--muted); font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 1px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tnode.group .label { font-weight: 600; }
+
+#commit-msg {
+  flex: 1 1 auto;
+  min-height: 60px;
+  resize: none;
+  padding: 6px 8px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 3px;
+  outline: none;
+  font-family: var(--jb-code-font, var(--vscode-editor-font-family, monospace));
+  font-size: var(--jb-code-size, var(--vscode-editor-font-size, 13px));
+  line-height: 1.4;
+  user-select: text;
+}
+#commit-msg::placeholder { color: var(--vscode-input-placeholderForeground); }
+#commit-msg:focus { border-color: var(--vscode-focusBorder); }
+.commit-actions { flex: none; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.commit-actions .spacer { flex: 1; }
+.check { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.check input { margin: 0; accent-color: var(--vscode-focusBorder); }
+
+.btn {
+  height: calc(var(--fs) + 13px);
+  padding: 0 12px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 3px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { background: var(--vscode-button-hoverBackground); }
+.btn.secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+.btn.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+
+.msg-subject { font-weight: 600; font-size: 1.1em; margin: 0 0 8px; line-height: 1.35; }
+.msg-body {
+  white-space: pre-wrap;
+  margin: 0 0 12px;
+  line-height: 1.45;
+  font-family: var(--jb-code-font, var(--vscode-editor-font-family, monospace));
+  font-size: var(--jb-code-size, var(--vscode-editor-font-size, 13px));
+}
+.meta { color: var(--muted); line-height: 1.6; }
+.meta .hash { color: var(--vscode-foreground); }
+.meta a, .meta .link-btn { color: var(--vscode-textLink-foreground); }
+.meta .refs-line { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px 10px; }
+
+/* ---------- menú contextual ---------- */
+
+.menu {
+  position: fixed;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  z-index: 1100;  /* por encima de los cuadros sobre el panel (.cf-back), p. ej. Modify options de Merge */
+  min-width: 220px;
+  padding: 4px 0;
+  background: var(--vscode-menu-background);
+  color: var(--vscode-menu-foreground);
+  border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border, transparent));
+  border-radius: 6px;
+  box-shadow: 0 4px 16px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
+  outline: none;
+}
+.mi {
+  height: calc(var(--fs) + 13px);
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin: 0 4px;
+  padding: 0 10px 0 12px;
+  border-radius: 4px;
+  white-space: nowrap;
+  cursor: default;
+}
+.mi .mi-label { flex: 1; display: flex; align-items: center; gap: 6px; }
+/* Columna del ✓ en los elementos marcables (Group By) */
+.mi .mi-check { flex: none; width: 14px; height: 14px; display: flex; align-items: center; margin-left: -4px; }
+.mi .mi-key { color: var(--muted); font-size: 0.9em; }
+.mi .mi-arrow { color: var(--muted); display: flex; align-items: center; margin-right: -4px; }
+.mi.active {
+  background: var(--vscode-menu-selectionBackground, var(--vscode-list-activeSelectionBackground));
+  color: var(--vscode-menu-selectionForeground, var(--vscode-list-activeSelectionForeground));
+}
+.mi.active .mi-key, .mi.active .mi-arrow { color: inherit; }
+.mi.disabled { opacity: 0.45; }
+/* Menús con buscador (filtros Branch y User): el buscador queda fijo arriba al desplazar */
+.menu.searchable { padding-top: 0; max-width: 480px; }
+.menu-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: block;
+  width: calc(100% - 8px);
+  height: calc(var(--fs) + 13px);
+  margin: 4px;
+  padding: 0 8px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-focusBorder);
+  border-radius: 3px;
+  outline: none;
+  font: inherit;
+  /* tapa también el margen, para que no se vean las filas al desplazar */
+  box-shadow: 0 -4px 0 4px var(--vscode-menu-background);
+}
+.menu-search::placeholder { color: var(--vscode-input-placeholderForeground); }
+.menu.searchable .mi-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mi-header {
+  padding: 6px 14px 2px;
+  color: var(--muted);
+  font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 2px);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mi-empty { padding: 6px 14px; color: var(--muted); }
+.mi-sep { height: 1px; margin: 4px 0; background: var(--vscode-menu-separatorBackground, var(--border)); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .menu { animation: menu-in 80ms ease-out; }
+  @keyframes menu-in { from { opacity: 0; transform: translateY(-2px); } }
+}
+
+/* ---------- vista previa del cambio seleccionado (Local Changes) ---------- */
+
+.preview-head {
+  flex: none;
+  height: calc(var(--fs) + 15px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.preview-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+#preview-body {
+  font-family: var(--jb-code-font, var(--vscode-editor-font-family, monospace));
+  font-size: var(--jb-code-size, var(--vscode-editor-font-size, 13px));
+  background: var(--vscode-editor-background);
+  user-select: text;
+}
+#preview-body .empty { font-family: var(--jb-font, var(--vscode-font-family)); font-size: var(--jb-font-size, var(--vscode-font-size, 13px)); }
+/* min-width: max-content para que el fondo de las líneas llegue hasta el final al hacer scroll */
+.diff { display: inline-block; min-width: 100%; padding-bottom: 8px; }
+.dl { display: flex; line-height: 19px; }
+.dl .ln {
+  flex: none;
+  width: calc(5ch + 12px);
+  padding: 0 6px;
+  text-align: right;
+  color: var(--vscode-editorLineNumber-foreground, var(--muted));
+  user-select: none;
+}
+/* Columna del botón de rollback de cada bloque, entre los números y el código */
+.dl .rb { flex: none; width: 22px; display: flex; align-items: center; justify-content: center; }
+.diff.two-btn .dl .rb { width: 40px; }
+.blk-btn {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--vscode-icon-foreground, var(--vscode-foreground));
+  opacity: 0.6;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.blk-btn svg { width: 14px; height: 14px; }
+.blk-btn:hover, .blk-btn:focus-visible { opacity: 1; background: var(--vscode-toolbar-hoverBackground); outline: none; }
+.dl.blk-hover { box-shadow: inset 3px 0 0 var(--vscode-focusBorder); }
+.dl .code { flex: 1 0 auto; padding: 0 12px 0 8px; white-space: pre; tab-size: 4; }
+.dl.add { background: var(--vscode-diffEditor-insertedLineBackground, rgba(155, 185, 85, 0.2)); }
+.dl.del { background: var(--vscode-diffEditor-removedLineBackground, rgba(255, 0, 0, 0.2)); }
+/* Parte de la línea que cambia (intraLine) */
+.dl.add .ch { background: var(--vscode-diffEditor-insertedTextBackground, rgba(155, 185, 85, 0.45)); border-radius: 2px; }
+.dl.del .ch { background: var(--vscode-diffEditor-removedTextBackground, rgba(255, 0, 0, 0.45)); border-radius: 2px; }
+.dl.gap {
+  height: 9px;
+  margin: 4px 0;
+  border-top: 1px dashed var(--border);
+  border-bottom: 1px dashed var(--border);
+  background: var(--vscode-diffEditor-unchangedRegionBackground, rgba(128, 128, 128, 0.08));
+}
+.dl.conflict { background: var(--vscode-merge-currentHeaderBackground, rgba(64, 200, 174, 0.5)); font-weight: 600; }
+
+/* ---------- varios repositorios ---------- */
+
+/* Franja de color a la izquierda de cada commit: de qué repo es (como en JetBrains) */
+.repo-mark {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 8px;              /* zona de clic más ancha que la franja visible */
+  box-shadow: inset 3px 0 0 var(--rc);
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 2px);
+  line-height: var(--row-h);
+  z-index: 1;
+}
+.repo-mark:hover { box-shadow: inset 4px 0 0 var(--rc); }
+/* Desplegada: nombre del repo sobre su color suave, y las filas se apartan para dejarle sitio */
+#log-list.repo-wide .repo-mark, .log-preview.repo-wide .repo-mark {
+  width: var(--repo-col, 90px);
+  box-sizing: border-box;
+  padding: 0 3px 0 5px;     /* lo justo: la franja de 3px y un respiro a cada lado */
+  background: color-mix(in srgb, var(--rc) 22%, transparent);
+  color: var(--vscode-foreground);
+}
+#log-list.repo-wide .row, .log-preview.repo-wide .row { padding-left: var(--repo-col, 90px); }
+/* Medidor del ancho de la columna (applyRepoColumn): mismo estilo, sin límite ni posición */
+#log-list .repo-mark.repo-probe, #log-list.repo-wide .repo-mark.repo-probe { position: absolute; visibility: hidden; width: auto; overflow: visible; box-sizing: border-box; padding: 0 3px 0 5px; }
+.rc0 { --rc: var(--vscode-charts-blue, #4f9fe0); }
+.rc1 { --rc: var(--vscode-charts-green, #5faf6e); }
+.rc2 { --rc: var(--vscode-charts-orange, #e08a3c); }
+.rc3 { --rc: var(--vscode-charts-purple, #b180d7); }
+.rc4 { --rc: var(--vscode-charts-red, #e5534b); }
+.rc5 { --rc: var(--vscode-charts-yellow, #d9a441); }
+/* Más de 6 repos: mezclas de los colores del tema, para que no se repitan hasta el 11.º */
+.rc6 { --rc: color-mix(in srgb, var(--vscode-charts-blue, #4f9fe0) 50%, var(--vscode-charts-green, #5faf6e)); }
+.rc7 { --rc: color-mix(in srgb, var(--vscode-charts-red, #e5534b) 50%, var(--vscode-charts-purple, #b180d7)); }
+.rc8 { --rc: color-mix(in srgb, var(--vscode-charts-green, #5faf6e) 50%, var(--vscode-charts-yellow, #d9a441)); }
+.rc9 { --rc: color-mix(in srgb, var(--vscode-charts-orange, #e08a3c) 55%, var(--vscode-foreground, #ccc)); }
+/* Ramas que no están en todos los repos: sus repos al lado, en cursiva */
+.tnode .repo-hint { font-style: italic; }
+/* Con poco ancho manda el nombre de la rama: los repos (base 0) solo ocupan el hueco que
+   sobra tras el nombre y se recortan con «…»; el nombre solo encoge si ni él cabe */
+.tnode .label { flex: 0 1 auto; min-width: 3em; }
+.tnode .repo-hint { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tnode .hint:not(.repo-hint) { flex: none; }
+
+/* ---------- cursor del teclado sobre una carpeta (keyNav) ---------- */
+.tnode.kb-cursor { background: var(--vscode-list-inactiveSelectionBackground); }
+.scroll:focus .tnode.kb-cursor {
+  background: var(--vscode-list-activeSelectionBackground);
+  color: var(--vscode-list-activeSelectionForeground);
+}
+/* Con el cursor en una carpeta, la selección de archivos no se resalta (como en JetBrains) */
+.kb-folder .tnode.selected:not(.kb-cursor) { background: transparent; color: inherit; }
+
+/* ---------- pestaña Settings ---------- */
+
+#view-settings #settings { flex: 1 1 auto; overflow: hidden; display: flex; outline: none; }
+
+/* Pestaña Settings: menú de categorías a la izquierda y la categoría elegida a la derecha
+   (como la ventana de ajustes de JetBrains); con búsqueda, todas las que coinciden */
+.set-layout { flex: 1 1 auto; display: flex; min-width: 0; min-height: 0; }
+.set-hidden { display: none !important; }
+.set-nav {
+  flex: none; width: calc(var(--fs) * 16); display: flex; flex-direction: column; min-height: 0;   /* 208px con 13px */
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  border-right: 1px solid var(--border);
+}
+.set-search { position: relative; flex: none; margin: 10px 10px 6px; }
+.set-search svg { position: absolute; left: 7px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; color: var(--muted); pointer-events: none; }
+.set-search input {
+  width: 100%; height: calc(var(--fs) + 13px); box-sizing: border-box; padding: 0 8px 0 27px; font: inherit;
+  color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent); border-radius: 4px; outline: none;
+}
+.set-search input:focus { border-color: var(--vscode-focusBorder); }
+.set-nav-list { flex: 1 1 auto; overflow-y: auto; padding: 2px 6px 8px; }
+.set-nav-item {
+  width: 100%; height: calc(var(--fs) + 15px); display: flex; align-items: center; gap: 8px; padding: 0 8px; margin: 1px 0;
+  border: none; border-radius: 4px; background: transparent; color: var(--vscode-foreground); font: inherit; text-align: left; cursor: pointer;
+}
+.set-nav-item svg { flex: none; width: 15px; height: 15px; color: var(--vscode-icon-foreground, var(--muted)); }
+.set-nav-item.child { padding-left: 44px; }
+/* Flecha para plegar una categoría con subcategorías; las demás llevan el hueco para alinearse */
+.set-nav-twisty { flex: none; width: 14px; height: 14px; margin-right: -4px; display: inline-flex; align-items: center; justify-content: center; border-radius: 3px; color: var(--muted); }
+.set-nav-twisty:not(.blank):hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, .2)); }
+.set-nav-twisty svg { width: 10px; height: 10px; transition: transform .1s; }
+.set-nav-twisty.closed svg { transform: rotate(-90deg); }
+.set-nav-item.active .set-nav-twisty { color: inherit; }
+.set-nav-item.folded { display: none; }
+/* Con búsqueda se ven todas (los resultados pueden estar en una subcategoría plegada) */
+.set-layout.searching .set-nav-item.folded { display: flex; }
+.set-layout.searching .set-nav-twisty { visibility: hidden; }
+.set-nav-item:hover { background: var(--vscode-list-hoverBackground); }
+.set-nav-item.active { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
+.set-nav-item.active svg { color: inherit; }
+.set-nav-item.dim { opacity: .45; }
+.set-nav-item:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.set-nav-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.set-nav-count { flex: none; min-width: 16px; padding: 0 5px; border-radius: 8px; font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 2px); line-height: 16px; text-align: center;
+  background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
+.set-nav-count:empty { display: none; }
+.set-nav-foot { flex: none; padding: 8px 14px 10px; border-top: 1px solid var(--border); font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 1px); }
+
+.set-content { flex: 1 1 auto; min-width: 0; overflow-y: auto; }
+.set-content-inner { max-width: calc(var(--fs) * 63); padding: 18px 28px 32px; }   /* 820px con 13px */
+.set-pagebody + .set-pagebody { margin-top: 8px; }
+.set-layout.searching .set-pagebody + .set-pagebody { margin-top: 24px; }
+.set-page-head { margin-bottom: 14px; display: flex; align-items: flex-start; gap: 16px; }
+.set-page-titles { flex: 0 1 auto; min-width: 0; }
+/* Las tarjetas miden lo que su contenido: el Reset to Defaults va junto al título, no al borde */
+/* Reset to Defaults de la sección: solo sale con algo cambiado; con búsqueda no */
+.set-page-reset { flex: none; margin-left: 10px; font-size: var(--fs); font-weight: normal; }
+.set-layout.searching .set-page-reset { display: none; }
+.set-crumb { color: var(--muted); font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 1px); margin-bottom: 2px; }
+.set-page-head h2 { margin: 0; font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) + 5px); font-weight: 600; }
+.set-page-desc { margin-top: 4px; color: var(--muted); }
+.set-layout.searching .set-page-head h2 { font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) + 2px); }
+/* Appearance: sus subcategorías una tras otra, como secciones (sin la miga «Appearance ›») */
+/* Separaciones: la tarjeta ya deja 14px debajo, así que entre subsecciones solo se suma un poco */
+.set-layout.set-parent-view .set-subpage { margin-top: 8px; }
+.set-layout.set-parent-view .set-pagebody:not(.set-subpage) .set-page-head { margin-bottom: 14px; }
+.set-layout.set-parent-view .set-subpage .set-page-head { margin-bottom: 10px; }
+.set-layout.set-parent-view .set-subpage .set-crumb { display: none; }
+.set-layout.set-parent-view .set-subpage .set-page-head h2 { font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) + 2px); }
+.set-noresults { color: var(--muted); padding: 24px 0; }
+
+/* Tarjetas: grupos de ajustes. Del ancho de su contenido (nunca más que la página); las del
+   Log ▸ Graph (opciones en columnas y vista previa) ocupan todo el ancho */
+.set-card { width: fit-content; min-width: min(calc(var(--fs) * 27.69), 100%); max-width: min(100%, calc(var(--fs) * 58.46)); box-sizing: border-box; }
+.set-card.lv-card, .set-preview .set-card { width: auto; max-width: none; }
+.set-card {
+  margin: 0 0 14px; padding: 6px 6px 8px; border-radius: 6px;
+  border: 1px solid var(--vscode-widget-border, var(--border));
+  background: color-mix(in srgb, var(--vscode-foreground) 3%, var(--vscode-editor-background));
+}
+.set-card-title {
+  padding: 6px 10px 4px; font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 2px); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);
+}
+.set-card-body { padding: 0 4px; }
+.set-card-body.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 0 8px; }
+.set-card h4 { margin: 10px 6px 6px; font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 2px); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+
+/* Un ajuste: título, descripción y control; la barra izquierda marca los cambiados */
+.set-item { display: block; padding: 8px 10px; border-radius: 4px; position: relative; }
+.set-item:hover { background: var(--vscode-list-hoverBackground); }
+.set-item.modified::before, .sc-row.modified::before {
+  content: ''; position: absolute; left: 0; top: 6px; bottom: 6px; width: 2px; border-radius: 1px;
+  background: var(--vscode-settings-modifiedItemIndicator, var(--vscode-focusBorder));
+}
+.set-item-head { display: flex; align-items: baseline; gap: 10px; }
+.set-item-label { font-weight: 600; }
+/* Reset de un ajuste: la flecha ↺, del alto de los controles (igual que la de Fonts) */
+.set-item .set-reset-icon { flex: none; width: calc(var(--fs) + 13px); height: calc(var(--fs) + 13px); display: inline-flex; align-items: center; justify-content: center; color: var(--vscode-icon-foreground, var(--muted)); }
+.set-item .set-reset-icon:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, .2)); }
+.set-item-head .set-reset-icon { align-self: center; width: calc(var(--fs) + 7px); height: calc(var(--fs) + 7px); }
+.set-item-control { margin-top: 7px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.set-item-control select, .set-item-control input[type=text], .set-item-control input[type=number] {
+  width: calc(var(--fs) * 21.54); max-width: 100%; box-sizing: border-box; height: calc(var(--fs) + 13px); padding: 0 8px; font: inherit;
+  color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent)); border-radius: 3px;
+}
+.set-item-control input[type=number] { width: calc(var(--fs) * 9.23); }
+.set-item-control select { background: var(--vscode-dropdown-background, var(--vscode-input-background)); color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground)); }
+.set-item-control :focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+/* Casillas: la casilla a la izquierda del título */
+.set-item-check { display: flex; align-items: center; gap: 9px; cursor: pointer; }
+.set-item-check input { margin: 0; }
+.set-item-check .set-item-label { font-weight: normal; }
+.set-item-text { min-width: 0; }
+.set-item-check:has(input:disabled) { opacity: .5; cursor: default; }
+
+@media (max-width: 640px) {
+  .set-layout { flex-direction: column; }
+  .set-nav { width: auto; border-right: none; border-bottom: 1px solid var(--border); }
+  .set-nav-list { display: flex; overflow-x: auto; overflow-y: hidden; gap: 2px; padding: 0 6px 6px; scrollbar-width: thin; }
+  .set-nav-item { width: auto; flex: none; }
+  .set-nav-item.child { padding-left: 8px; }
+  .set-nav-twisty { display: none; }
+  .set-nav-item.folded { display: flex; }
+  .set-nav-foot { display: none; }
+  .set-content-inner { padding: 14px 14px 24px; }
+}
+
+/* Colores de carpetas */
+.fc-list { display: flex; flex-direction: column; gap: 4px; padding: 2px 0 6px; }
+.fc-row { display: flex; align-items: center; gap: 8px; }
+.fc-swatch { flex: none; display: flex; color: var(--muted); }
+.fc-name { flex: 0 0 calc(var(--fs) * 12.31); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-row select { width: calc(var(--fs) * 10); height: calc(var(--fs) + 11px); color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground)); background: var(--vscode-dropdown-background, var(--vscode-input-background)); border: 1px solid var(--vscode-dropdown-border, transparent); border-radius: 2px; font: inherit; }
+.fc-row input[type=color] { width: 28px; height: 22px; padding: 0; border: 1px solid var(--vscode-input-border, transparent); background: none; cursor: pointer; }
+.fc-row input[type=color].hidden { display: none; }
+.fc-del-spacer { width: 22px; }
+.fc-swatch.tag-swatch { color: var(--c-tag); }
+
+.mi .mi-swatch { flex: none; width: 10px; height: 10px; border-radius: 50%; }
+.mi .mi-swatch.no-color { border: 1px dashed var(--muted); box-sizing: border-box; }
+.fc-add { display: flex; gap: 8px; align-items: center; padding: 4px 0; }
+.fc-add input { width: calc(var(--fs) * 15.38); height: calc(var(--fs) + 11px); box-sizing: border-box; padding: 0 6px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); border-radius: 2px; font: inherit; }
+
+/* Settings ▸ Keyboard Shortcuts */
+.sc-note { margin: 0 10px 6px; color: var(--vscode-editorWarning-foreground, #cca700); }
+.sc-list { display: flex; flex-direction: column; gap: 2px; }
+.sc-row { display: flex; align-items: center; gap: 6px; min-height: calc(var(--fs) + 17px); padding: 0 10px; border-radius: 4px; position: relative; }
+.sc-row:hover { background: var(--vscode-list-hoverBackground); }
+.sc-name { flex: 0 0 calc(var(--fs) * 23.08); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sc-key {
+  min-width: calc(var(--fs) * 6.92); height: calc(var(--fs) + 9px); padding: 0 8px; font: inherit; font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 1px); cursor: pointer; text-align: left;
+  color: var(--vscode-keybindingLabel-foreground, var(--vscode-foreground));
+  background: var(--vscode-keybindingLabel-background, rgba(128, 128, 128, .17));
+  border: 1px solid var(--vscode-keybindingLabel-border, rgba(51, 51, 51, .6)); border-radius: 3px;
+}
+.sc-key.none { color: var(--muted); background: transparent; border-style: dashed; }
+.sc-key.recording { color: var(--vscode-foreground); border-color: var(--vscode-focusBorder); background: transparent; }
+.sc-key:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+.sc-spacer { width: 24px; flex: none; }
+.sc-warn { display: inline-flex; align-items: center; gap: 4px; font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 1px); color: var(--vscode-editorWarning-foreground, #cca700); }
+.sc-warn svg { width: 13px; height: 13px; }
+
+/* Marca HEAD al lado de la rama actual en el árbol de ramas */
+.head-badge {
+  flex: none; margin-left: 6px; padding: 0 4px; border-radius: 3px; font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 3px); font-weight: 600; line-height: 14px;
+  color: var(--c-head); border: 1px solid color-mix(in srgb, var(--c-head) 60%, transparent);
+}
+.tnode.selected .head-badge { color: inherit; border-color: currentColor; }
+
+/* Listas propias dentro de las tarjetas de Settings (colores, paletas) */
+.set-card-body > .fc-list, .set-card-body > .fc-add { padding-left: 10px; padding-right: 10px; }
+.fc-row[data-fc-name], .bc-row { padding: 2px 0; border-radius: 4px; }
+
+/* Settings ▸ Appearance ▸ Fonts: fuente y tamaño en una línea */
+.set-item.set-inline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.set-inline select, .set-inline input[type=text] {
+  height: calc(var(--fs) + 13px); box-sizing: border-box; padding: 0 8px; font: inherit;
+  color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent)); border-radius: 3px;
+}
+.set-inline select { background: var(--vscode-dropdown-background, var(--vscode-input-background)); color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground)); }
+.set-inline :focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+/* El ↺ de las fuentes: alineado con los desplegables (debajo de los subtítulos Font / Size) y de su alto */
+.set-inline .set-reset-icon { align-self: flex-end; width: calc(var(--fs) + 13px); height: calc(var(--fs) + 13px); display: inline-flex; align-items: center; justify-content: center; color: var(--vscode-icon-foreground, var(--muted)); }
+.set-inline .set-reset-icon:hover { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, .2)); }
+.set-inline .fc-row select { width: calc(var(--fs) * 16.92); }
+.bc-row.modified, .tag-row.modified { position: relative; }
+.bc-row.modified::before, .tag-row.modified::before { content: ''; position: absolute; left: -8px; top: 5px; bottom: 5px; width: 2px; border-radius: 1px; background: var(--vscode-settings-modifiedItemIndicator, var(--vscode-focusBorder)); }
+.tag-row { padding: 2px 0; border-radius: 4px; }
+
+/* Selector de color propio (tags): icono y nombre del color, de ese color */
+.color-pick {
+  width: auto; height: calc(var(--fs) + 11px); display: inline-flex; align-items: center; gap: 6px; padding: 0 6px; box-sizing: border-box; cursor: pointer; font: inherit;
+  background: var(--vscode-dropdown-background, var(--vscode-input-background));
+  border: 1px solid var(--vscode-dropdown-border, var(--vscode-input-border, transparent)); border-radius: 2px;
+}
+.color-pick:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.color-pick .cp-ico { display: inline-flex; }
+.color-pick .cp-ico svg { width: 14px; height: 14px; }
+.color-pick .cp-label { flex: none; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.color-pick .cp-arrow { display: inline-flex; color: var(--vscode-dropdown-foreground, var(--vscode-foreground)); }
+.color-pick .cp-arrow svg { width: 12px; height: 12px; }
+.cp-hex { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.tag-row { position: relative; }
+.mi .mi-icon { display: inline-flex; flex: none; }
+.mi .mi-icon svg { width: 14px; height: 14px; }
+
+/* Settings ▸ Graph Colors: ramas y tags en un mismo cuadro, en dos columnas */
+.gc-cols { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0 28px; }
+.gc-col { min-width: 0; }
+.gc-col > .fc-list, .gc-col > .fc-add { padding-left: 10px; padding-right: 10px; }
+.gc-tags { border-left: 1px solid var(--vscode-widget-border, var(--border)); padding-left: 18px; }
+@media (max-width: 760px) {
+  .gc-cols { grid-template-columns: minmax(0, 1fr); }
+  .gc-tags { border-left: none; padding-left: 0; border-top: 1px solid var(--vscode-widget-border, var(--border)); margin-top: 8px; }
+}
+.gc-tags .fc-name { flex: 0 1 auto; margin-right: 8px; }
+.gc-tags .fc-row { flex-wrap: wrap; }
+
+/* Folder Colors: la paleta en el título del cuadro */
+.set-card-head { display: flex; align-items: center; gap: 8px; padding-right: 6px; }
+.set-card-head .spacer { flex: 1 1 auto; }
+.pal-pick { text-transform: none; letter-spacing: 0; font-weight: 600; color: var(--vscode-foreground); font-size: var(--jb-font-size, var(--vscode-font-size, 13px)); }
+
+/* Fonts: subtítulos de las columnas Font y Size, alineados con los desplegables */
+.font-col { display: flex; flex-direction: column; gap: 1px; }
+.font-col-head { padding-left: 2px; font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 2px); font-weight: 600; color: var(--muted); line-height: 1.2; }
+.set-inline .font-break { order: 9; flex-basis: 100%; height: 0; }
+.set-inline .font-custom { order: 10; }
+/* Fuente y tamaño, con algo más de aire entre ellos */
+.set-inline.font-line { column-gap: 18px; }
+
+/* Confirmación sobre el panel (showConfirm en main.js): centrada, del tamaño de su contenido */
+.cf-back {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center; padding: 8px;
+  background: color-mix(in srgb, var(--vscode-editor-background, #000) 55%, transparent);
+}
+.cf {
+  display: flex; flex-direction: column; box-sizing: border-box;
+  width: max-content; min-width: min(calc(var(--fs) * 24.62), 100%); max-width: min(calc(var(--fs) * 43.08), 100%); max-height: 100%;
+  padding: 12px 14px; border-radius: 6px;
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+  color: var(--vscode-editorWidget-foreground, var(--vscode-foreground));
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-widget-border, var(--border)));
+  box-shadow: 0 4px 18px var(--vscode-widget-shadow, rgba(0, 0, 0, .4));
+}
+.cf-title { flex: none; display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 8px; }
+.cf-icon { display: inline-flex; color: var(--vscode-editorWarning-foreground, #cca700); }
+.cf-body { flex: 0 1 auto; min-height: 0; overflow-y: auto; padding-right: 6px; margin-right: -6px; }
+.cf-notes p { margin: 0 0 6px; line-height: 1.4; color: var(--muted, var(--vscode-descriptionForeground)); word-break: break-word; }
+.cf-section { margin: 2px 0 8px; }
+.cf-label { margin-bottom: 4px; }
+.cf-list { list-style: none; margin: 0; padding: 4px 8px; border-radius: 4px; max-height: 132px; overflow-y: auto;
+  background: color-mix(in srgb, var(--vscode-foreground) 5%, transparent); border: 1px solid var(--vscode-widget-border, var(--border)); }
+.cf-list li { display: flex; align-items: center; gap: 8px; line-height: calc(var(--fs) + 7px); overflow: hidden; }
+.cf-list li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cf-list svg { flex: none; width: 14px; height: 14px; color: var(--vscode-descriptionForeground); }
+.cf-cb-box { margin-top: 2px; padding-top: 8px; border-top: 1px solid var(--vscode-widget-border, var(--border)); }
+.cf-check { display: flex; align-items: center; gap: 6px; cursor: pointer; margin-bottom: 6px; }
+.cf-check input { margin: 0; }
+.cf-cb-items { margin-left: 22px; transition: opacity .1s; }
+.cf-cb-items.off { opacity: .45; }
+.cf-actions { flex: none; display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+
+/* Ventana Merge (showMergeDialog en main.js), con el mismo marco que la confirmación */
+.cf.mg { width: min(calc(var(--fs) * 36), 100%); max-width: 100%; }
+.mg-icon { display: inline-flex; flex: none; color: var(--vscode-charts-blue, var(--vscode-foreground)); }
+.mg-where { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: normal; color: var(--muted, var(--vscode-descriptionForeground)); }
+.mg-body { flex: 0 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.mg-line { flex: none; display: flex; align-items: center; gap: 6px; }
+/* .mg doble: la regla general input[type="text"] (alto --fs + 11px) ganaría por especificidad.
+   Mismo alto que .btn, para que el campo y Modify options queden iguales */
+.mg .mg-search { flex: 1 1 auto; width: auto; min-width: 0; box-sizing: border-box; height: calc(var(--fs) + 13px); margin: 0; padding: 0 6px; font: inherit;
+  color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent)); border-radius: 3px; outline: none; }
+.mg .mg-search:focus, .mg-msg:focus { border-color: var(--vscode-focusBorder); }
+.mg-modify { flex: none; display: inline-flex; align-items: center; gap: 4px; box-sizing: border-box; margin: 0; white-space: nowrap; }
+/* Cancel y Merge centrados; Cancel sin relleno, solo con el borde */
+.mg .cf-actions { justify-content: center; }
+.mg .btn.mg-cancel { background: transparent; color: var(--vscode-foreground); border-color: var(--vscode-button-border, var(--vscode-widget-border, var(--border))); }
+.mg .btn.mg-cancel:hover { background: var(--vscode-toolbar-hoverBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent)); }
+.mg-list { flex: 0 1 auto; min-height: calc((var(--fs) + 7px) * 3); max-height: calc((var(--fs) + 7px) * 12); overflow-y: auto; padding: 2px 0; border-radius: 2px;
+  background: var(--vscode-list-inactiveSelectionBackground, transparent); background: color-mix(in srgb, var(--vscode-foreground) 4%, transparent);
+  border: 1px solid var(--vscode-widget-border, var(--border)); }
+.mg-head { padding: 4px 8px 2px; font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 2px); font-weight: 600; color: var(--muted, var(--vscode-descriptionForeground)); }
+.mg-row { display: flex; align-items: center; gap: 6px; padding: 0 8px 0 14px; line-height: calc(var(--fs) + 7px); cursor: default; overflow: hidden; }
+.mg-row:hover { background: var(--vscode-list-hoverBackground); }
+.mg-row.sel { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
+.mg-ico { display: inline-flex; flex: none; color: var(--vscode-descriptionForeground); }
+.mg-row.sel .mg-ico { color: inherit; }
+.mg-ico.fav { color: var(--vscode-charts-yellow, #e2c08d); }
+.mg-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mg-row .repo-hint { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-style: italic; color: var(--muted, var(--vscode-descriptionForeground)); }
+.mg-row.sel .repo-hint { color: inherit; opacity: .8; }
+.mg-empty { padding: 4px 8px; color: var(--muted, var(--vscode-descriptionForeground)); }
+.mg-chips { flex: none; display: flex; flex-wrap: wrap; gap: 4px; }
+.mg-chip { display: inline-flex; align-items: center; gap: 2px; padding: 0 2px 0 6px; border-radius: 3px; line-height: calc(var(--fs) + 5px);
+  font-family: var(--vscode-editor-font-family, monospace);
+  background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
+.mg-chip-x { display: inline-flex; align-items: center; padding: 2px; border: none; border-radius: 2px; background: none; color: inherit; cursor: pointer; }
+.mg-chip-x:hover { background: color-mix(in srgb, currentColor 20%, transparent); }
+.mg-msg { flex: none; box-sizing: border-box; width: 100%; resize: vertical; padding: 4px 6px;
+  font-family: var(--vscode-editor-font-family, monospace); font-size: var(--vscode-editor-font-size, 13px);
+  color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--vscode-widget-border, transparent)); border-radius: 2px; outline: none; }
+.mi .mg-opt { font-family: var(--vscode-editor-font-family, monospace); }
+.mi .mg-opt-desc { color: var(--muted, var(--vscode-descriptionForeground)); margin-left: 6px; }
+.mi.active .mg-opt-desc { color: inherit; opacity: .8; }
+
+/* Casillas como las de los ajustes de VS Code: cuadro con los colores del tema y ✓ dibujada
+   con dos bordes (sin imágenes, por la CSP) */
+input[type=checkbox] {
+  appearance: none; -webkit-appearance: none; flex: none; position: relative; box-sizing: border-box;
+  width: calc(var(--fs) + 3px); height: calc(var(--fs) + 3px); margin: 0; border-radius: 3px; cursor: pointer; vertical-align: middle;
+  background: var(--vscode-checkbox-background, var(--vscode-input-background));
+  border: 1px solid var(--vscode-checkbox-border, var(--vscode-input-border, var(--vscode-widget-border, #6b6b6b)));
+}
+input[type=checkbox]:checked { background: var(--vscode-checkbox-selectBackground, var(--vscode-checkbox-background, var(--vscode-input-background))); border-color: var(--vscode-checkbox-selectBorder, var(--vscode-checkbox-border, #6b6b6b)); }
+input[type=checkbox]:checked::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: calc(var(--fs) * .23); height: calc(var(--fs) * .54); box-sizing: content-box;
+  border: solid var(--vscode-checkbox-foreground, var(--vscode-foreground)); border-width: 0 1.6px 1.6px 0;
+  /* centrado en el cuadro: la ✓ girada tiene su centro visual algo por encima del rectángulo */
+  transform: translate(-50%, -62%) rotate(45deg);
+}
+input[type=checkbox]:hover:not(:disabled) { border-color: var(--vscode-focusBorder); }
+input[type=checkbox]:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+input[type=checkbox]:disabled { opacity: .5; cursor: default; }
+
+/* Settings ▸ Log: todas las opciones en una tarjeta a lo ancho (una columna por grupo) y
+   debajo la vista previa (logPreviewHtml). La página se ensancha para que quepan las columnas */
+.set-content-inner:has(.set-pagebody[data-page="graph"]:not(.set-hidden) .set-preview) { max-width: 1320px; }
+.lv-cols { display: grid; grid-template-columns: max-content repeat(4, minmax(150px, 1fr)); gap: 4px 24px; }
+@media (max-width: 1100px) { .lv-cols { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); } }
+.lv-col { min-width: 0; }
+.lv-col h4 { margin: 0 0 4px; padding: 0 6px; font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 2px); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.lv-col .set-item { padding: 4px 6px; }
+.lv-col .set-item-control { margin-top: 4px; }
+/* Cada control con su tamaño: la fecha, lo que mide su opción más larga; el número, 6 cifras */
+.lv-col .set-item-control select.lv-date { width: auto; max-width: 100%; }
+.lv-col .set-item-control input[type=number] { width: calc(var(--fs) * 7.38); }
+.set-preview { margin-top: 0; }
+.set-layout.searching .set-preview { display: none; }
+.lp-frame { display: flex; border: 1px solid var(--vscode-widget-border, var(--border)); border-radius: 4px; overflow: hidden;
+  background: var(--vscode-panel-background, var(--vscode-editor-background)); }
+.lp-log { position: relative; flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.lp-log .row:hover { background: none; }
+.lp-stub { flex: 0 0 120px; padding: 6px 8px; box-sizing: border-box; border-right: 1px solid var(--vscode-widget-border, var(--border)); }
+.lp-stub:last-child { border-right: none; border-left: 1px solid var(--vscode-widget-border, var(--border)); flex-basis: 180px; }
+.lp-stub-title { font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 3px); color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .03em; }
+.lp-bar { height: 6px; border-radius: 3px; margin: 0 0 9px; background: color-mix(in srgb, var(--vscode-foreground) 14%, transparent); }
+.lp-w0 { width: 85%; } .lp-w1 { width: 60%; } .lp-w2 { width: 72%; }
+
+/* Botón «i» de un ajuste (item con info): la explicación sale al pasar el ratón o con el foco,
+   y con un clic se queda fijada (.pinned) hasta pulsar fuera o Escape */
+.set-info-wrap { position: relative; display: inline-flex; align-self: center; }
+.set-info { width: calc(var(--fs) + 5px); height: calc(var(--fs) + 5px); padding: 0; border: none; border-radius: 50%; background: transparent;
+  display: inline-flex; align-items: center; justify-content: center; color: var(--muted); cursor: pointer; }
+.set-info svg { width: calc(var(--fs) + 1px); height: calc(var(--fs) + 1px); }
+.set-info:hover, .set-info-wrap.pinned .set-info { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, .2)); }
+.set-info:focus-visible { outline: 1px solid var(--vscode-focusBorder); }
+.set-info-pop {
+  display: none; position: absolute; left: 50%; top: calc(100% + 6px); transform: translateX(-24px); z-index: 50;
+  width: max-content; max-width: min(calc(var(--fs) * 26), 70vw); padding: 7px 10px; border-radius: 4px; white-space: pre-line;
+  font-weight: normal; line-height: 1.45; color: var(--vscode-editorHoverWidget-foreground, var(--vscode-foreground));
+  background: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background, #252526));
+  border: 1px solid var(--vscode-editorHoverWidget-border, var(--vscode-widget-border, #454545));
+  box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, .36));
+}
+.set-info-wrap:hover .set-info-pop, .set-info:focus-visible + .set-info-pop, .set-info-wrap.pinned .set-info-pop { display: block; }
+.set-item-head .set-info-wrap { margin-left: -4px; }
+/* La «i» junto al texto de una casilla y junto al título de una página */
+.set-item-text { display: inline-flex; align-items: center; gap: 6px; }
+.set-page-head h2 { display: flex; align-items: center; gap: 6px; }
+.set-info-pop { font-size: var(--fs); font-weight: normal; text-transform: none; letter-spacing: normal; }
+/* Las tarjetas de una misma página (o subsección), todas del ancho de la más ancha: una
+   rejilla de una columna que mide lo que su contenido más largo (con los mismos límites que
+   .set-card). Log ▸ Graph va a todo el ancho */
+.set-pagebody { display: grid; grid-template-columns: minmax(min(calc(var(--fs) * 27.69), 100%), max-content); max-width: 100%; }
+.set-pagebody > .set-card { width: auto; }
+/* Tarjetas en la misma fila (General: Fonts y Repositories), del mismo alto; si no caben, una debajo de otra */
+.set-row { display: flex; flex-wrap: wrap; align-items: stretch; column-gap: 14px; min-width: 0; }
+.set-row > .set-card { flex: 1 1 auto; min-width: 0; }
+.set-pagebody[data-page="graph"] { grid-template-columns: minmax(0, 1fr); }
+.set-pagebody > .set-page-head { min-width: 0; }
+.gc-tags .gc-sub { margin-top: 16px; }

@@ -1,0 +1,125 @@
+/* Ventanas de diálogo en una ventana flotante (media/dialog.js): solo variables del tema */
+:root {
+  /* Tamaño de letra de la interfaz: las alturas de barras, filas y controles crecen con él */
+  --fs: var(--jb-font-size, var(--vscode-font-size, 13px));
+  --muted: var(--vscode-descriptionForeground);
+  --border: var(--vscode-panel-border, var(--vscode-editorGroup-border, #444));
+  --c-local: var(--vscode-charts-yellow, #d9a441);
+}
+/* Los controles no heredan la fuente por defecto: así usan la de Settings ▸ Fonts */
+button, input, select, textarea { font: inherit; }
+html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+body {
+  background: var(--vscode-editor-background);
+  color: var(--vscode-foreground);
+  font-family: var(--jb-font, var(--vscode-font-family));
+  font-size: var(--jb-font-size, var(--vscode-font-size, 13px));
+}
+.muted { color: var(--muted); }
+.spacer { flex: 1 1 auto; }
+#dlg { height: 100vh; box-sizing: border-box; padding: 12px 14px; display: flex; flex-direction: column; }
+.btn {
+  height: calc(var(--fs) + 13px);
+  padding: 0 12px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 3px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover { background: var(--vscode-button-hoverBackground); }
+.btn.secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+.btn.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+.dlg-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+/* Mensaje de varias líneas (Squash) */
+.dlg-title { font-weight: 600; margin-bottom: 6px; }
+.dlg-detail { color: var(--muted); }
+.dlg-detail p { margin: 0 0 6px; word-break: break-word; }
+.dlg-textarea {
+  flex: 1 1 auto; min-height: 80px; margin: 6px 0 0; resize: none; box-sizing: border-box; padding: 6px;
+  font-family: var(--jb-code-font, var(--vscode-editor-font-family, monospace)); font-size: var(--jb-code-size, var(--vscode-editor-font-size, 13px));
+  color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--border)); border-radius: 2px;
+}
+.dlg-textarea:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.dlg-actions { flex: none; display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.dlg-hint { font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 1px); }
+
+/* Push Commits */
+.pd-body { flex: 1 1 auto; min-height: 0; display: flex; border: 1px solid var(--border); border-radius: 3px; }
+.pd-left { flex: 3 1 0; min-width: 0; overflow: auto; }
+.pd-right { flex: 2 1 0; min-width: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); }
+.pd-files-title { flex: none; padding: 6px 8px; border-bottom: 1px solid var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pd-files { flex: 1 1 auto; overflow: auto; }
+.pd-repo + .pd-repo { border-top: 1px solid var(--border); }
+.pd-head { display: flex; align-items: center; gap: 6px; padding: 6px 8px; flex-wrap: wrap; white-space: nowrap; }
+.pd-reponame { font-weight: 600; }
+.pd-branch { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; color: var(--c-local); }
+.pd-head select, .pd-head input[type=text], .pd-footer select {
+  height: calc(var(--fs) + 9px); box-sizing: border-box; padding: 0 4px; font: inherit;
+  color: var(--vscode-input-foreground); background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent); border-radius: 2px;
+}
+.pd-head input[type=text] { width: 180px; }
+.pd-head select:focus, .pd-head input:focus, .pd-footer select:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+.pd-badges { display: inline-flex; gap: 6px; align-items: center; }
+.pd-badge { display: inline-flex; align-items: center; gap: 2px; font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 2px); padding: 0 5px; border-radius: 8px; line-height: 16px; }
+.pd-badge svg { width: 12px; height: 12px; }
+.pd-badge.new { color: var(--vscode-gitDecoration-addedResourceForeground, var(--vscode-charts-green)); border: 1px solid currentColor; }
+.pd-badge.warn { color: var(--vscode-editorWarning-foreground, #cca700); }
+.pd-badge.lock { color: var(--muted); }
+.pd-commits { padding: 0 0 6px 28px; }
+.pd-commit { display: flex; gap: 10px; height: calc(var(--fs) + 9px); align-items: center; padding: 0 8px; border-radius: 3px; cursor: default; white-space: nowrap; }
+.pd-commit:hover { background: var(--vscode-list-hoverBackground); }
+.pd-commit.selected { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
+.pd-subject { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pd-author { flex: 0 0 auto; max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+.pd-date { flex: none; }
+.pd-none { padding: 4px 8px; font-style: italic; }
+.pd-file { display: flex; gap: 6px; align-items: center; height: calc(var(--fs) + 9px); padding: 0 8px; white-space: nowrap; cursor: default; }
+.pd-file:hover { background: var(--vscode-list-hoverBackground); }
+.pd-st { flex: none; width: 12px; font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 2px); font-weight: 700; text-align: center; }
+.pd-st.st-A { color: var(--vscode-gitDecoration-addedResourceForeground); }
+.pd-st.st-M { color: var(--vscode-gitDecoration-modifiedResourceForeground); }
+.pd-st.st-D { color: var(--vscode-gitDecoration-deletedResourceForeground); }
+.pd-st.st-R { color: var(--vscode-gitDecoration-renamedResourceForeground, var(--vscode-gitDecoration-modifiedResourceForeground)); }
+.pd-fdir { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: calc(var(--jb-font-size, var(--vscode-font-size, 13px)) - 1px); }
+.pd-footer { flex: none; display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.pd-footer .pd-tags { margin: 0; white-space: nowrap; }
+.pd-footer .spacer { flex: 1 1 auto; }
+
+/* Rama de destino: texto con lápiz; el campo solo aparece al editar */
+.pd-target { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
+.pd-target-name { }
+.pd-target.editing .pd-target-name, .pd-target.editing .pd-edit { display: none; }
+.pd-edit {
+  width: 20px; height: 20px; padding: 0; display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 3px; background: transparent; color: var(--muted); cursor: pointer;
+}
+.pd-edit:hover, .pd-edit:focus-visible { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); outline: none; }
+.hidden { display: none !important; }
+
+/* Confirmación (borrar ramas): título fijo, contenido con scroll y botones siempre visibles */
+
+/* Casillas como las de los ajustes de VS Code: cuadro con los colores del tema y ✓ dibujada
+   con dos bordes (sin imágenes, por la CSP) */
+input[type=checkbox] {
+  appearance: none; -webkit-appearance: none; flex: none; position: relative; box-sizing: border-box;
+  width: calc(var(--fs) + 3px); height: calc(var(--fs) + 3px); margin: 0; border-radius: 3px; cursor: pointer; vertical-align: middle;
+  background: var(--vscode-checkbox-background, var(--vscode-input-background));
+  border: 1px solid var(--vscode-checkbox-border, var(--vscode-input-border, var(--vscode-widget-border, #6b6b6b)));
+}
+input[type=checkbox]:checked { background: var(--vscode-checkbox-selectBackground, var(--vscode-checkbox-background, var(--vscode-input-background))); border-color: var(--vscode-checkbox-selectBorder, var(--vscode-checkbox-border, #6b6b6b)); }
+input[type=checkbox]:checked::after {
+  content: ""; position: absolute; left: 50%; top: 50%; width: calc(var(--fs) * .23); height: calc(var(--fs) * .54); box-sizing: content-box;
+  border: solid var(--vscode-checkbox-foreground, var(--vscode-foreground)); border-width: 0 1.6px 1.6px 0;
+  /* centrado en el cuadro: la ✓ girada tiene su centro visual algo por encima del rectángulo */
+  transform: translate(-50%, -62%) rotate(45deg);
+}
+input[type=checkbox]:hover:not(:disabled) { border-color: var(--vscode-focusBorder); }
+input[type=checkbox]:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+input[type=checkbox]:disabled { opacity: .5; cursor: default; }
