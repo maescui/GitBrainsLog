@@ -1252,6 +1252,7 @@
   const meName = () => (data ? (data.repos.find(r => r.me) || {}).me || '' : '');
   const sendLogFilter = (key, value) => { filterChanging = true; vscode.postMessage({ type: 'logFilter', key, value }); };
   const pickLogFilter = key => vscode.postMessage({ type: 'pickLogFilter', key });
+  let pathsTimer;  // envío pendiente del filtro Paths (clics seguidos en el menú)
 
   /** Texto del filtro activo («me», «2 users», «Last 7 Days»…) o '' si no está activo. */
   function filterValue(k) {
@@ -1333,22 +1334,22 @@
 
   /** Paths: los repositorios (marcables) y archivos o carpetas concretos, como en JetBrains. */
   function pathsFilterMenu() {
-    // Copia propia: con Ctrl+clic el menú sigue abierto y cada clic parte de lo ya marcado
-    const f = { roots: [...logFilters().roots], paths: [...logFilters().paths] };
-    const send = () => sendLogFilter('paths', { roots: f.roots, paths: f.paths });
-    const toggleRoot = root => () => {
-      f.roots = f.roots.includes(root) ? f.roots.filter(x => x !== root) : [...f.roots, root];
-      send();
+    // Repos y rutas forman un solo grupo marcable (el menú sigue abierto entre clics). Al log va
+    // solo el estado final: varios clics seguidos se juntan en un único filtro (un solo git log).
+    const { roots, paths } = logFilters();
+    const send = vals => {
+      clearTimeout(pathsTimer);
+      pathsTimer = setTimeout(() => sendLogFilter('paths', {
+        roots: vals.filter(v => v.root).map(v => v.root),
+        paths: vals.filter(v => v.path).map(v => v.path),
+      }), 250);
     };
     return clean([
-      ...data.repos.map(r => ({ label: r.name, key: r.rel && r.rel !== r.name ? r.rel : '', checked: f.roots.includes(r.root), multi: true, act: toggleRoot(r.root) })),
+      ...data.repos.map(r => ({ label: r.name, key: r.rel && r.rel !== r.name ? r.rel : '', checked: roots.includes(r.root), multi: send, value: { root: r.root } })),
       { sep: true },
       { label: 'Select Files or Folders…', act: () => pickLogFilter('paths') },
-      f.paths.length > 0 && { sep: true },
-      ...f.paths.map(p => ({ label: pathLabel(p), checked: true, multi: true, act: () => {
-        f.paths = f.paths.includes(p) ? f.paths.filter(x => x !== p) : [...f.paths, p];
-        send();
-      } })),
+      paths.length > 0 && { sep: true },
+      ...paths.map(p => ({ label: pathLabel(p), checked: true, multi: send, value: { path: p } })),
     ]);
   }
 
@@ -1358,7 +1359,7 @@
     if (clear) {
       const k = clear.getAttribute('data-clear');
       if (k === 'branch') { setFilter(null); }
-      else if (k === 'paths') { sendLogFilter('paths', { roots: [], paths: [] }); }
+      else if (k === 'paths') { clearTimeout(pathsTimer); sendLogFilter('paths', { roots: [], paths: [] }); }
       else { sendLogFilter(k === 'user' ? 'authors' : k, k === 'date' ? null : []); }
       return;
     }
@@ -2087,13 +2088,19 @@
         e.stopPropagation();
         if (it.disabled) { return; }
         if (it.submenu) { openSub(idx); return; }
-        // Elementos marcables con multi: Ctrl/Cmd+clic los marca o desmarca sin cerrar el menú
-        if (it.multi && (e.ctrlKey || e.metaKey)) {
-          it.checked = !it.checked;
-          mi.setAttribute('aria-checked', String(it.checked));
-          const c = mi.querySelector('.mi-check');
-          if (c) { c.innerHTML = it.checked ? ICON.check : ''; }
-          it.act && it.act();
+        // Grupo marcable (it.multi: función del grupo, it.value: valor de la opción). El menú no se
+        // cierra (solo al pinchar fuera o con Esc). Clic marca o desmarca esta opción; Ctrl/Cmd+clic
+        // deja marcada solo esta. El grupo recibe de una vez los valores marcados.
+        if (it.multi) {
+          const only = e.ctrlKey || e.metaKey;
+          const group = rows.filter(r => r.it.multi === it.multi);
+          for (const r of only ? group : [rows[idx]]) {
+            r.it.checked = only ? r.it === it : !r.it.checked;
+            r.mi.setAttribute('aria-checked', String(r.it.checked));
+            const c = r.mi.querySelector('.mi-check');
+            if (c) { c.innerHTML = r.it.checked ? ICON.check : ''; }
+          }
+          it.multi(group.filter(r => r.it.checked).map(r => r.it.value));
           return;
         }
         closeMenus();
