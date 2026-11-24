@@ -61,6 +61,12 @@
         "command": "jbGit.showHistory",
         "title": "Show History",
         "category": "Git Log"
+      },
+      {
+        "command": "jbGit.openFile",
+        "title": "Open File",
+        "category": "Git Log",
+        "icon": "$(go-to-file)"
       }
     ],
     "menus": {
@@ -90,6 +96,19 @@
           "command": "jbGit.refresh",
           "when": "view == jbGit.log",
           "group": "navigation@2"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "jbGit.openFile",
+          "when": "isInDiffEditor && resourceScheme == jbgit",
+          "group": "navigation@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "jbGit.openFile",
+          "when": "false"
         }
       ]
     },

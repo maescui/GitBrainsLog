@@ -28,6 +28,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('jbGit.refresh', () => provider.init()),
     vscode.commands.registerCommand('jbGit.focus', () => vscode.commands.executeCommand('jbGit.log.focus')),
     vscode.commands.registerCommand('jbGit.showHistory', (uri?: vscode.Uri) => provider.showHistoryForUri(uri)),
+    vscode.commands.registerCommand('jbGit.openFile', (uri: vscode.Uri) => openWorkingCopy(uri)),
     vscode.workspace.onDidChangeWorkspaceFolders(() => provider.init()),
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('jbGit')) { provider.postSettings(); }
@@ -46,6 +47,24 @@ export function deactivate() { /* nada */ }
 
 function revisionUri(root: string, ref: string, relPath: string): vscode.Uri {
   return vscode.Uri.from({ scheme: SCHEME, path: '/' + relPath, query: JSON.stringify({ ref, root }) });
+}
+
+/** Abre el archivo del árbol de trabajo (rel dentro de root); avisa si ya no existe. */
+async function showWorkingFile(root: string, rel: string) {
+  const abs = safeRepoPath(root, rel);
+  if (!abs) { return; }
+  try {
+    await vscode.window.showTextDocument(vscode.Uri.file(abs), { preview: true });
+  } catch {
+    vscode.window.showWarningMessage(`${rel} doesn't exist in the working tree.`);
+  }
+}
+
+/** Botón «Open File» de la pestaña de diff de una revisión (uri: el lado derecho, jbgit:). */
+function openWorkingCopy(uri: vscode.Uri) {
+  try {
+    return showWorkingFile((JSON.parse(uri.query) as { root: string }).root, uri.path.replace(/^\//, ''));
+  } catch { /* uri sin el formato de revisionUri */ }
 }
 
 class GitContentProvider implements vscode.TextDocumentContentProvider {
@@ -765,15 +784,8 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
     await vscode.commands.executeCommand('vscode.diff', left, right, title, { preview: true, preserveFocus: true, ...(viewColumn ? { viewColumn } : {}) });
   }
 
-  private async openWorkingFile(repo: Repo, rel: string) {
-    const abs = safeRepoPath(repo.root, rel);
-    if (!abs) { return; }
-    const uri = vscode.Uri.file(abs);
-    try {
-      await vscode.window.showTextDocument(uri, { preview: true });
-    } catch {
-      vscode.window.showWarningMessage(`${rel} doesn't exist in the working tree.`);
-    }
+  private openWorkingFile(repo: Repo, rel: string) {
+    return showWorkingFile(repo.root, rel);
   }
 
   /**
