@@ -33,7 +33,7 @@ o en VS Code: *Extensions ▸ ⋯ ▸ Install from VSIX…*
 
 ### Log
 
-- **Grafo de commits** con un color fijo por rama (el mismo en cada recarga y en todos los repos). Las aristas que unen commits muy lejanos se cortan con una flecha que, al pulsarla, salta al otro extremo, como en JetBrains.
+- **Grafo de commits** con un color fijo por rama (el mismo en cada recarga y en todos los repos). La rama principal (`main` o `master`) va siempre en la columna de la izquierda, aunque haya ramas más recientes. Las aristas que unen commits muy lejanos se cortan con una flecha que, al pulsarla, salta al otro extremo, como en JetBrains.
 - **Panel de ramas** con Local, Remote y Tags en árbol, indicadores ↑/↓, buscador, ramas favoritas (estrella) y ramas protegidas (candado). Doble clic en una rama filtra el log por ella.
 - **Filtros** junto al buscador: *Branch*, *User*, *Date* y *Paths*. Se combinan y filtran en git, así que valen sobre todo el historial.
 - **Detalles** del commit seleccionado: archivos cambiados (doble clic abre el diff), mensaje completo, autor y padres enlazados.

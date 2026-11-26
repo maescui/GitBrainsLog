@@ -12,6 +12,7 @@ Los cambios de cada versión de GitBrainsLog. El formato sigue [Keep a Changelog
 ### Cambiado
 
 - **Filtro *Paths*: selección múltiple con el menú abierto.** Un clic marca o desmarca un repositorio o una ruta sin cerrar el menú, que se cierra al pinchar fuera o con Esc; Ctrl/Cmd+clic deja marcado solo ese. Los clics seguidos se aplican de una vez, sin recargar el log en cada uno.
+- **Grafo del Log: la rama principal (main o master) siempre en la columna de la izquierda.** Antes cada rama tomaba el primer carril libre por orden de aparición, así que una rama más reciente que la punta de *main* se quedaba con la columna 0 y *main* quedaba a su derecha. Ahora el carril 0 se reserva para la línea principal (la cadena de primeros padres desde *main* o, si no, *master*; o la de su remoto si no hay local); las demás ramas empiezan en la columna 1 y, si salen de *main*, su línea se une a ella curvándose hacia la izquierda. Si no hay *main* ni *master*, el grafo se reparte como siempre; con varios repos, solo la línea principal que aparece primero se queda con el carril 0.
 
 ### Corregido
 

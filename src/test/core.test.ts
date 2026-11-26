@@ -5,7 +5,7 @@ import * as path from 'path';
 import {
   scanDepth, commitsPerPage, MAX_SCAN_DEPTH, MAX_COMMITS_PAGE, mergeArgs, MERGE_OPTIONS, autoBranchColor,
   validateSetting, validFontFamily, validFontSize, mergeLogs, FOLDER_COLOR_TOKENS, samePath, pathInside, safeRepoPath,
-  nestedRepos,
+  nestedRepos, pickMainRef,
 } from '../core';
 import { MAIN_COLOR } from '../graph';
 
@@ -247,6 +247,30 @@ describe('rutas (samePath, pathInside, safeRepoPath)', () => {
     assert.equal(safeRepoPath(root, '.'), undefined);
     assert.equal(safeRepoPath(root, 'a\0b'), undefined);
     assert.equal(safeRepoPath(root, 42), undefined);
+  });
+});
+
+describe('pickMainRef (la rama principal de un repo, para el grafo)', () => {
+  const local = (name: string) => ({ type: 'local', name, full: `refs/heads/${name}` });
+  const remote = (remote: string, branch: string) => ({ type: 'remote', name: `${remote}/${branch}`, remote, branch, full: `refs/remotes/${remote}/${branch}` });
+
+  test('la local main', () => assert.equal(pickMainRef([local('dev'), local('main')])?.name, 'main'));
+  test('la local master si no hay main', () => assert.equal(pickMainRef([local('dev'), local('master')])?.name, 'master'));
+  test('main antes que master si hay las dos', () => assert.equal(pickMainRef([local('master'), local('main')])?.name, 'main'));
+  test('una local manda sobre la remota', () => assert.equal(pickMainRef([remote('origin', 'main'), local('master')])?.name, 'master'));
+
+  test('sin ninguna local, la del remoto por defecto', () => {
+    assert.equal(pickMainRef([remote('upstream', 'main'), remote('origin', 'main')], 'origin')?.name, 'origin/main');
+    assert.equal(pickMainRef([remote('origin', 'master')], 'origin')?.name, 'origin/master');
+  });
+
+  test('un remoto sin «branch» (se saca del nombre) también vale', () => {
+    assert.equal(pickMainRef([{ type: 'remote', name: 'origin/main', remote: 'origin' }], 'origin')?.name, 'origin/main');
+  });
+
+  test('ni main ni master: ninguna (ni un tag ni una rama que se llame parecido)', () => {
+    assert.equal(pickMainRef([local('develop'), local('main2'), local('feature/main'), { type: 'tag', name: 'main', full: 'refs/tags/main' }]), undefined);
+    assert.equal(pickMainRef([]), undefined);
   });
 });
 

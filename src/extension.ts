@@ -12,7 +12,7 @@ import { DialogWindow } from './dialog';
 import { fontAttrs, fontSettings } from './fonts';
 import {
   scanDepth, commitsPerPage, mergeArgs, autoBranchColor, DEFAULT_FOLDER_COLORS, validateSetting, mergeLogs,
-  samePath, pathInside, safeRepoPath, nestedRepos, SerialQueue, Generation, watchSpecs, nonce as newNonce, escAttr,
+  samePath, pathInside, safeRepoPath, nestedRepos, pickMainRef, SerialQueue, Generation, watchSpecs, nonce as newNonce, escAttr,
 } from './core';
 
 const SCHEME = 'jbgit';
@@ -541,7 +541,12 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
         const inList = new Set(list.map(c => c.hash));
         list = list.map(c => ({ ...c, parents: c.parents.filter(p => inList.has(p)) }));
       }
-      const graph = computeGraph(list, this.longEdges(), this.branchColorFn(included));
+      // La rama principal de cada repo (main o master): su línea va en el carril de la izquierda
+      const mainTips = included.flatMap(r => {
+        const m = pickMainRef(r.refs, r.defaultRemote());
+        return m ? [r.id(m.hash)] : [];
+      });
+      const graph = computeGraph(list, this.longEdges(), this.branchColorFn(included), mainTips);
       const favs = this.favoriteSets();
       this.post({
         type: 'data',

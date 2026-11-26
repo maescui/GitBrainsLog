@@ -658,3 +658,140 @@ describe('computeGraph: orden incorrecto', () => {
     }
   });
 });
+
+describe('computeGraph: la línea principal (main/master) en el carril 0', () => {
+  const runMain = (list: C[], mainTips: string[], showLong = false, colorOf?: (h: string) => GraphColor | undefined) => {
+    const rows = computeGraph(list, showLong, colorOf, mainTips);
+    checkGraph(list, rows, showLong, colorOf);
+    return rows;
+  };
+  const colOf = (list: C[], rows: GraphRow[]) => Object.fromEntries(list.map((c, i) => [c.hash, rows[i].col]));
+  /** La cadena de primeros padres desde la punta (la misma definición que usa computeGraph). */
+  const mainLineOf = (list: C[], tip: string): string[] => {
+    const rowOf = new Map(list.map((c, i) => [c.hash, i]));
+    const out: string[] = [];
+    let row = rowOf.get(tip);
+    while (row !== undefined && !out.includes(list[row].hash)) {
+      out.push(list[row].hash);
+      const r0 = row;
+      const next = list[row].parents.filter(p => (rowOf.get(p) ?? list.length) > r0)[0];
+      row = next === undefined ? undefined : rowOf.get(next);
+    }
+    return out;
+  };
+
+  test('una rama más nueva que main ya no la desplaza: main en el 0 y la rama a su derecha', () => {
+    //  F1 (rama, parte de C1)   M (main)   C1 (raíz)
+    const list: C[] = [{ hash: 'F1', parents: ['C1'] }, { hash: 'M', parents: ['C1'] }, { hash: 'C1', parents: [] }];
+    // Antes: la rama más nueva tomaba el carril 0 y main se quedaba en el 1
+    assert.deepEqual(colOf(list, computeGraph(list)), { F1: 0, M: 1, C1: 0 });
+    const rows = runMain(list, ['M']);
+    assert.deepEqual(colOf(list, rows), { F1: 1, M: 0, C1: 0 });
+    // La línea de la rama se une a main en C1, curvándose hacia la izquierda
+    assert.ok(rows[2].edges.some(e => e.kind === 'in' && e.from === 1 && e.to === 0));
+  });
+
+  test('main detrás de una rama (la rama tiene commits encima de la punta de main)', () => {
+    const list: C[] = [{ hash: 'F2', parents: ['F1'] }, { hash: 'F1', parents: ['M'] }, { hash: 'M', parents: ['C1'] }, { hash: 'C1', parents: [] }];
+    assert.deepEqual(colOf(list, computeGraph(list)), { F2: 0, F1: 0, M: 0, C1: 0 });   // sin reservar, ya salía a la izquierda
+    const rows = runMain(list, ['M']);
+    assert.deepEqual(colOf(list, rows), { F2: 1, F1: 1, M: 0, C1: 0 });                  // ahora main siempre en el 0
+    assert.ok(rows[2].edges.some(e => e.kind === 'in' && e.from === 1 && e.to === 0), 'la rama se une a main en su punta');
+  });
+
+  test('main que mergea una rama: la rama a la derecha, main en el 0', () => {
+    const list: C[] = [
+      { hash: 'M2', parents: ['M1', 'B1'] }, { hash: 'B1', parents: ['M0'] }, { hash: 'M1', parents: ['M0'] }, { hash: 'M0', parents: [] },
+    ];
+    const c = colOf(list, runMain(list, ['M2']));
+    assert.deepEqual([c.M2, c.M1, c.M0], [0, 0, 0]);
+    assert.ok(c.B1 >= 1);
+  });
+
+  test('muchas ramas por encima: main sigue en el 0 y nada se solapa con él', () => {
+    // 5 ramas con commits más nuevos que main, todas salidas de C1
+    const feats: C[] = Array.from({ length: 5 }, (_, i) => ({ hash: `F${i}`, parents: ['C1'] }));
+    const list: C[] = [...feats, { hash: 'M', parents: ['C1'] }, { hash: 'C1', parents: [] }];
+    const c = colOf(list, runMain(list, ['M']));
+    assert.equal(c.M, 0);
+    assert.equal(c.C1, 0);
+    for (const f of feats) { assert.ok(c[f.hash] >= 1, `${f.hash} no puede ir en el carril de main`); }
+  });
+
+  test('sin la punta de main en la lista, el resultado es idéntico al de siempre', () => {
+    for (let seed = 1; seed <= 20; seed++) {
+      const list = newestFirst(simulate(seed, 80));
+      assert.deepEqual(computeGraph(list, false, undefined, ['no-esta']), computeGraph(list));
+      assert.deepEqual(computeGraph(list, false, undefined, []), computeGraph(list));
+    }
+  });
+
+  test('el carril 0 solo se reserva hasta el último commit de main: después lo usa cualquiera', () => {
+    // main (M1 → M0, raíz) termina antes que otra historia independiente (G2 → G1 → G0)
+    const list: C[] = [{ hash: 'M1', parents: ['M0'] }, { hash: 'M0', parents: [] },
+      { hash: 'G2', parents: ['G1'] }, { hash: 'G1', parents: ['G0'] }, { hash: 'G0', parents: [] }];
+    const c = colOf(list, runMain(list, ['M1']));
+    assert.deepEqual([c.M1, c.M0], [0, 0]);
+    assert.deepEqual([c.G2, c.G1, c.G0], [0, 0, 0], 'sin hueco a la izquierda para siempre');
+  });
+
+  test('con la rama principal sin ramas encima el grafo no cambia', () => {
+    const list = linear(8);
+    assert.deepEqual(runMain(list, ['c0']), computeGraph(list));
+  });
+
+  test('dos repos: la primera línea principal se queda con el carril 0 y la otra no choca', () => {
+    const list: C[] = [{ hash: 'A2', parents: ['A1'] }, { hash: 'B2', parents: ['B1'] }, { hash: 'A1', parents: ['A0'] },
+      { hash: 'B1', parents: ['B0'] }, { hash: 'A0', parents: [] }, { hash: 'B0', parents: [] }];
+    const c = colOf(list, runMain(list, ['A2', 'B2']));
+    assert.deepEqual([c.A2, c.A1, c.A0], [0, 0, 0]);
+    assert.ok([c.B2, c.B1, c.B0].every(x => x >= 1));
+  });
+
+  test('arista larga en la línea principal: tras la flecha vuelve al carril 0', () => {
+    // M1 → M0 queda a más de LONG_EDGE filas (una rama larga entre medias)
+    const filler: C[] = Array.from({ length: 40 }, (_, i) => ({ hash: `F${i}`, parents: i < 39 ? [`F${i + 1}`] : ['M0'] }));
+    const list: C[] = [{ hash: 'M1', parents: ['M0'] }, ...filler, { hash: 'M0', parents: [] }];
+    const rows = runMain(list, ['M1']);
+    const c = colOf(list, rows);
+    assert.deepEqual([c.M1, c.M0], [0, 0]);
+    assert.ok(rows.some(r => r.edges.some(e => e.kind === 'down' && e.from === 0)), 'se corta con flecha en el carril 0');
+    assert.ok(rows.some(r => r.edges.some(e => e.kind === 'up' && e.from === 0)), 'reaparece en el carril 0');
+    for (let i = 1; i <= 40; i++) { assert.ok(rows[i].col >= 1, `${list[i].hash} no usa el carril de main`); }
+  });
+
+  test('el color de la línea principal se conserva al unirse una rama', () => {
+    const list: C[] = [{ hash: 'F1', parents: ['C1'] }, { hash: 'M', parents: ['C1'] }, { hash: 'C1', parents: [] }];
+    const colorOf = (h: string): GraphColor | undefined => (h === 'M' ? MAIN_COLOR : h === 'F1' ? 5 : undefined);
+    const rows = runMain(list, ['M'], false, colorOf);
+    assert.equal(rows[1].color, MAIN_COLOR);
+    assert.equal(rows[2].color, MAIN_COLOR, 'C1 sigue siendo de main aunque la rama lo esperara');
+    assert.equal(rows[0].color, 5);
+  });
+
+  test('historias generadas: la línea principal siempre en el 0 y el grafo sigue siendo válido', () => {
+    for (let seed = 1; seed <= 120; seed++) {
+      const list = newestFirst(simulate(seed, 150, { octopus: seed % 3 === 0 }));
+      // Una cabeza de rama cualquiera hace de main
+      const hasChild = new Set(list.flatMap(c => c.parents));
+      const heads = list.filter(c => !hasChild.has(c.hash));
+      const tip = rng(seed).pick(heads).hash;
+      for (const showLong of [false, true]) {
+        const rows = runMain(list, [tip], showLong);
+        const rowOf = new Map(list.map((c, i) => [c.hash, i]));
+        for (const h of mainLineOf(list, tip)) {
+          assert.equal(rows[rowOf.get(h)!].col, 0, `seed ${seed}: ${h} de la línea principal fuera del carril 0`);
+        }
+      }
+    }
+  });
+
+  test('DAG aleatorio y órdenes topológicos aleatorios: sigue siendo válido', () => {
+    for (let seed = 400; seed <= 440; seed++) {
+      const dag = randomDag(seed, 150, seed % 2 ? 60 : 30);
+      runMain(dag, [dag[rng(seed).int(Math.min(10, dag.length))].hash]);
+      const topo = randomTopo(simulate(seed, 100, { maxBranches: 10 }), seed * 5);
+      runMain(topo, [topo[rng(seed + 1).int(Math.min(6, topo.length))].hash], true);
+    }
+  });
+});

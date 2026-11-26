@@ -774,3 +774,42 @@ describe('carpetas en Local Changes (repos anidados, enlaces a carpetas): sin EI
     assert.equal(m.text, 'plain');
   });
 });
+
+describe('grafo: la rama principal en la columna de la izquierda', () => {
+  /** Columna del grafo de cada commit del último log, por mensaje. */
+  const colsOf = (p: Panel) => Object.fromEntries((lastOf(p, 'data').commits as any[]).map(c => [c.subject, c.g.col]));
+
+  /** c1 y c2 en la rama principal, y una rama que sale de c1 con un commit más nuevo que c2. */
+  function repoWithNewerBranch(main: string) {
+    const r = TestRepo.init(undefined, main);
+    cleanup.push(() => rm(r.root));
+    r.commit('c1', { 'a.txt': 'a\n' });
+    r.commit('c2', { 'a.txt': 'b\n' });
+    r.git('switch', '-q', '-c', 'feature', 'HEAD~1');
+    r.commit('f1', { 'f.txt': 'f\n' });
+    r.git('switch', '-q', main);
+    return r;
+  }
+
+  test('main con una rama más nueva por encima: main en la columna 0 y la rama a su derecha', async () => {
+    const p = await open(repoWithNewerBranch('main').root);
+    assert.deepEqual(colsOf(p), { f1: 1, c2: 0, c1: 0 });
+  });
+
+  test('igual con master', async () => {
+    const p = await open(repoWithNewerBranch('master').root);
+    assert.deepEqual(colsOf(p), { f1: 1, c2: 0, c1: 0 });
+  });
+
+  test('sin main ni master el grafo se reparte como siempre', async () => {
+    const p = await open(repoWithNewerBranch('trunk').root);
+    assert.deepEqual(colsOf(p), { f1: 0, c2: 1, c1: 0 });
+  });
+
+  test('si main está a la derecha por una rama checked-out, también se coloca a la izquierda', async () => {
+    const r = repoWithNewerBranch('main');
+    r.git('switch', '-q', 'feature');                       // HEAD en la rama; main sigue siendo la principal
+    const p = await open(r.root);
+    assert.deepEqual(colsOf(p), { f1: 1, c2: 0, c1: 0 });
+  });
+});

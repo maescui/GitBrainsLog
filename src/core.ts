@@ -98,6 +98,26 @@ export function mergeArgs(options: unknown, message: unknown): string[] {
   return args;
 }
 
+/** Las ramas principales, por orden de preferencia (como MAIN_BRANCHES de media/main.js). */
+export const MAIN_BRANCHES = ['main', 'master'];
+
+/**
+ * La rama principal de un repo: la local `main` o, si no, `master`; y si no hay ninguna local, la
+ * de su remoto por defecto. El grafo del Log deja su línea en el carril de la izquierda.
+ */
+export function pickMainRef<R extends { type: string; name: string; remote?: string; branch?: string }>(refs: R[], remote?: string): R | undefined {
+  for (const n of MAIN_BRANCHES) {
+    const local = refs.find(r => r.type === 'local' && r.name === n);
+    if (local) { return local; }
+  }
+  const nameOf = (r: R) => r.branch ?? r.name.slice(r.name.indexOf('/') + 1);
+  for (const n of MAIN_BRANCHES) {
+    const remoteRef = refs.find(r => r.type === 'remote' && nameOf(r) === n && (!remote || !r.remote || r.remote === remote));
+    if (remoteRef) { return remoteRef; }
+  }
+  return undefined;
+}
+
 /**
  * Color automático de una rama: main y master, MAIN_COLOR (amarillo); las demás, uno de los
  * otros nueve según un hash del nombre (siempre el mismo para el mismo nombre). Las que caerían
