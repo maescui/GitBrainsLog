@@ -1184,7 +1184,12 @@
   function multiBranchActions(sels) {
     const branches = sels.filter(r => r.type !== 'tag');
     const locals = branches.filter(r => r.type === 'local');
-    const deletable = branches.filter(r => !r.current && !r.protected);
+    // Borrar: los tags siempre (solo el local) y las ramas que no sean la actual ni una protegida
+    const tags = sels.filter(r => r.type === 'tag');
+    const deletable = [...branches.filter(r => !r.current && !r.protected), ...tags];
+    const delWhat = deletable.length === 1 ? `'${deletable[0].name}'`
+      : deletable.every(r => r.type === 'tag') ? `${deletable.length} Tags`
+      : deletable.some(r => r.type === 'tag') ? `${deletable.length} Branches and Tags` : `${deletable.length} Branches`;
     const n = (k, list = branches) => list.length === 1 ? `'${list[0].name}'` : `${k} Branches`;
     const many = (action, list) => ({ type: 'branchesAction', action, refs: list.map(refPayload) });
     const allFav = branches.length > 0 && branches.every(isFavorite);
@@ -1192,7 +1197,7 @@
       update: { title: locals.length ? `Update ${n(locals.length, locals)}` : 'Update (select local branches)', on: locals.length > 0, msg: many('update', locals) },
       push: { title: locals.length ? `Push ${n(locals.length, locals)}…` : 'Push (select local branches)', on: locals.length > 0, msg: many('push', locals) },
       favorite: { title: `${allFav ? 'Unmark' : 'Mark'} ${n(branches.length)} as Favorite`, on: branches.length > 0, msg: { type: 'toggleFavorite', refs: branches.map(r => ({ full: r.full, repos: r.repos })) } },
-      delete: { title: deletable.length ? `Delete ${n(deletable.length, deletable)}` + (deletable.length < sels.length ? ' (current, protected branches and tags skipped)' : '') : 'Delete (current and protected branches cannot be deleted)', on: deletable.length > 0, msg: many('delete', deletable) },
+      delete: { title: deletable.length ? `Delete ${delWhat}` + (deletable.length < sels.length ? ' (current and protected branches skipped)' : '') : 'Delete (current and protected branches cannot be deleted)', on: deletable.length > 0, msg: many('delete', deletable) },
     };
   }
   function multiBranchMenu(sels) {

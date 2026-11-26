@@ -793,6 +793,58 @@ describe('filtro Paths: menú de selección múltiple', () => {
   });
 });
 
+describe('varias ramas o tags seleccionados: acción Delete', () => {
+  const { multiBranchActions } = sandbox(MAIN, ['refPayload', 'multiBranchActions'], { isFavorite: () => false });
+  const tag = (name: string) => ({ type: 'tag', name, full: `refs/tags/${name}`, repos: [0] });
+  const local = (name: string, extra: object = {}) => ({ type: 'local', name, full: `refs/heads/${name}`, repos: [0], ...extra });
+  const remote = (name: string, extra: object = {}) => ({ type: 'remote', name, full: `refs/remotes/${name}`, repos: [0], ...extra });
+  const del = (sels: object[]) => multiBranchActions(sels).delete;
+
+  test('solo tags: se pueden borrar todos (antes quedaba desactivado por «rama actual o protegida»)', () => {
+    const d = del([tag('v1'), tag('v2'), tag('v3')]);
+    assert.equal(d.on, true);
+    assert.equal(d.title, 'Delete 3 Tags');
+    assert.deepEqual(d.msg.refs.map((r: any) => r.full), ['refs/tags/v1', 'refs/tags/v2', 'refs/tags/v3']);
+    assert.deepEqual(d.msg.refs.map((r: any) => r.type), ['tag', 'tag', 'tag']);
+    assert.equal(d.msg.action, 'delete');
+  });
+
+  test('tags y ramas: se borran los dos, y el título lo dice', () => {
+    const d = del([tag('v1'), tag('v2'), local('feature/x')]);
+    assert.equal(d.title, 'Delete 3 Branches and Tags');
+    assert.deepEqual(d.msg.refs.map((r: any) => r.type), ['local', 'tag', 'tag']);
+  });
+
+  test('la rama actual y las protegidas se saltan, pero los tags no', () => {
+    const d = del([local('main', { current: true }), remote('origin/main', { protected: true }), tag('v1'), local('old')]);
+    assert.equal(d.on, true);
+    assert.equal(d.title, 'Delete 2 Branches and Tags (current and protected branches skipped)');
+    assert.deepEqual(d.msg.refs.map((r: any) => r.name).sort(), ['old', 'v1']);
+  });
+
+  test('un solo elemento borrable: lo nombra', () => {
+    assert.equal(del([tag('v1'), local('main', { current: true })]).title, "Delete 'v1' (current and protected branches skipped)");
+  });
+
+  test('solo la rama actual y protegidas: sigue desactivado, con su explicación', () => {
+    const d = del([local('main', { current: true }), remote('origin/main', { protected: true })]);
+    assert.equal(d.on, false);
+    assert.equal(d.title, 'Delete (current and protected branches cannot be deleted)');
+  });
+
+  test('solo ramas: como antes', () => {
+    assert.equal(del([local('a'), local('b')]).title, 'Delete 2 Branches');
+    assert.equal(del([local('a'), local('b'), local('main', { current: true })]).title, 'Delete 2 Branches (current and protected branches skipped)');
+  });
+
+  test('los tags no cuentan para Update, Push ni Favorite (solo ramas)', () => {
+    const a = multiBranchActions([tag('v1'), tag('v2')]);
+    assert.equal(a.update.on, false);
+    assert.equal(a.push.on, false);
+    assert.equal(a.favorite.on, false);
+  });
+});
+
 describe('reglas de CSP en media/*.js', () => {
   for (const [name, src] of SCRIPTS) {
     const code = stripComments(src);

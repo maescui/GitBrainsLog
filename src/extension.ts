@@ -1545,7 +1545,9 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
     const one = valid.length === 1 ? valid[0] : null;
     const multi = this.repos.length > 1;
     const repoNames = (p: RefPayload) => this.reposOf(p.repos).filter(r => r.refs.some(x => x.full === p.full)).map(r => r.name);
-    const title = !one ? `Delete ${valid.length} branches?`
+    const anyTag = valid.some(p => p.type === 'tag');
+    const title = !one ? `Delete ${valid.length} ${valid.every(p => p.type === 'tag') ? 'tags' : anyTag ? 'branches and tags' : 'branches'}?`
+      : one.type === 'tag' ? `Delete tag '${one.name}'?`
       : one.type === 'remote' ? `Delete remote branch '${one.name}'?` : `Delete branch '${one.name}'?`;
     // Contenido de la ventana: notas (párrafos) y secciones con un título y una lista
     const notes: string[] = [];
@@ -1560,10 +1562,15 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
       } else if (multi) {
         sections.push({ label: names.length === 1 ? 'In this repository:' : `In these ${names.length} repositories:`, items: names });
       }
+      if (one.type === 'tag') { notes.push('Only the local tag is deleted.'); }
     } else {
-      // Varias ramas: una línea por rama, con sus repos
-      sections.push({ label: 'Branches:', items: valid.map(p => `${p.type === 'remote' ? 'remote ' : ''}'${p.name}'${multi ? ` — ${repoNames(p).join(', ')}` : ''}`) });
-      if (valid.some(p => p.type === 'remote')) { notes.push('Remote branches are deleted on the remote.'); }
+      // Varias ramas o tags: una línea por elemento, con sus repos
+      const line = (p: RefPayload) => `${p.type === 'remote' ? 'remote ' : ''}'${p.name}'${multi ? ` — ${repoNames(p).join(', ')}` : ''}`;
+      const branches = valid.filter(p => p.type !== 'tag'), tags = valid.filter(p => p.type === 'tag');
+      if (branches.length) { sections.push({ label: 'Branches:', items: branches.map(line) }); }
+      if (tags.length) { sections.push({ label: 'Tags:', items: tags.map(line) }); }
+      if (branches.some(p => p.type === 'remote')) { notes.push('Remote branches are deleted on the remote.'); }
+      if (tags.length) { notes.push(tags.length === 1 ? 'Only the local tag is deleted.' : 'Only the local tags are deleted.'); }
     }
     // Locales con rama en el remoto: solo se informa, la remota no se toca. Se agrupan por
     // «local → remota»; si es en todos los repos de la rama, basta una línea sin lista
@@ -1715,7 +1722,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
     });
   }
 
-  /** Borra una rama (local o remota) en sus repos, sin la confirmación general. */
+  /** Borra una rama (local o remota) o un tag (solo el local) en sus repos, sin la confirmación general. */
   private async deleteBranch(payload: RefPayload) {
     if (payload.type === 'remote' && this.isProtectedRemote(payload.full, payload.repos)) {
       throw new Error(`'${payload.name}' is a protected branch and cannot be deleted.`);
@@ -1725,6 +1732,9 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
     const name = payload.name;
     if (payload.type === 'local') {
       return this.forEachRepo(repos, r => this.deleteLocal(r, name));
+    }
+    if (payload.type === 'tag') {
+      return this.forEachRepo(repos, r => this.exec(r, ['tag', '-d', name], `Deleting tag '${name}'…`));
     }
     if (payload.type === 'remote') {
       return this.forEachRepo(repos, r => {

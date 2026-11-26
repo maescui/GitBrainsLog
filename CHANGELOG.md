@@ -12,3 +12,7 @@ Los cambios de cada versión de GitBrainsLog. El formato sigue [Keep a Changelog
 ### Cambiado
 
 - **Filtro *Paths*: selección múltiple con el menú abierto.** Un clic marca o desmarca un repositorio o una ruta sin cerrar el menú, que se cierra al pinchar fuera o con Esc; Ctrl/Cmd+clic deja marcado solo ese. Los clics seguidos se aplican de una vez, sin recargar el log en cada uno.
+
+### Corregido
+
+- **Borrar varios tags a la vez.** Con varios tags seleccionados en el árbol de ramas, la papelera (y la tecla Supr) salía desactivada con el aviso de que la rama actual y las protegidas no se pueden borrar, aunque no hubiera ninguna rama. Ahora se borran todos los tags con una sola confirmación (solo los locales, el remoto no se toca), también mezclados con ramas; la rama actual y las protegidas se siguen saltando.

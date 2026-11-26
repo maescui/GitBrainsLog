@@ -546,3 +546,67 @@ describe('Log en una pestaña del editor', () => {
     assert.equal(p.provider.editor, a.panel);
   });
 });
+
+describe('borrar varias ramas y tags a la vez', () => {
+  const ref = (full: string) => ({ full, repos: [0] });
+  const tags = (r: TestRepo) => r.git('tag', '-l').trim().split('\n').filter(Boolean).sort();
+  const branches = (r: TestRepo) => r.git('branch', '--format=%(refname:short)').trim().split('\n').sort();
+  /** Manda el borrado y contesta al cuadro de confirmación como la página (ok / cancelar). */
+  async function deleteRefs(p: Panel, refs: object[], ok = true) {
+    const asked = p.waitFor('confirm');
+    const done = p.send({ type: 'branchesAction', action: 'delete', refs });
+    const c = await asked;
+    await p.send({ type: 'confirmResult', id: c.id, ok, checked: false });
+    await done;
+    return c;
+  }
+
+  test('varios tags locales: un solo cuadro y se borran todos (sin tocar la rama actual)', async () => {
+    const r = newRepo();
+    for (const t of ['v1', 'v2', 'v3']) { r.git('tag', t); }
+    const p = await open(r.root);
+    const c = await deleteRefs(p, ['v1', 'v2', 'v3'].map(t => ref(`refs/tags/${t}`)));
+    assert.equal(c.heading, 'Delete 3 tags?');
+    assert.deepEqual(c.sections, [{ label: 'Tags:', items: ["'v1'", "'v2'", "'v3'"] }]);
+    assert.ok(c.notes.includes('Only the local tags are deleted.'));
+    assert.deepEqual(tags(r), []);
+    assert.deepEqual(branches(r), ['main']);
+  });
+
+  test('tags y ramas mezclados: cada uno en su lista, y se borran los dos', async () => {
+    const r = newRepo();
+    r.git('tag', 'v1'); r.git('tag', 'v2'); r.git('branch', 'feature/x');
+    const p = await open(r.root);
+    const c = await deleteRefs(p, [ref('refs/tags/v1'), ref('refs/tags/v2'), ref('refs/heads/feature/x')]);
+    assert.equal(c.heading, 'Delete 3 branches and tags?');
+    assert.deepEqual(c.sections.map((s: any) => s.label), ['Branches:', 'Tags:']);
+    assert.deepEqual(tags(r), []);
+    assert.deepEqual(branches(r), ['main']);
+  });
+
+  test('un solo tag por el mismo camino: el cuadro habla de un tag, no de una rama', async () => {
+    const r = newRepo();
+    r.git('tag', 'v1'); r.git('tag', 'v2');
+    const p = await open(r.root);
+    const c = await deleteRefs(p, [ref('refs/tags/v1')]);
+    assert.equal(c.heading, "Delete tag 'v1'?");
+    assert.ok(c.notes.includes('Only the local tag is deleted.'));
+    assert.deepEqual(tags(r), ['v2']);
+  });
+
+  test('si se cancela el cuadro, no se borra ningún tag', async () => {
+    const r = newRepo();
+    r.git('tag', 'v1'); r.git('tag', 'v2');
+    const p = await open(r.root);
+    await deleteRefs(p, [ref('refs/tags/v1'), ref('refs/tags/v2')], false);
+    assert.deepEqual(tags(r), ['v1', 'v2']);
+  });
+
+  test('un tag anotado también se borra, y los demás tags siguen', async () => {
+    const r = newRepo();
+    r.git('tag', '-a', 'v1', '-m', 'primera'); r.git('tag', 'v2'); r.git('tag', 'keep');
+    const p = await open(r.root);
+    await deleteRefs(p, [ref('refs/tags/v1'), ref('refs/tags/v2')]);
+    assert.deepEqual(tags(r), ['keep']);
+  });
+});
