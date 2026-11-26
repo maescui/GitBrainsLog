@@ -665,6 +665,134 @@ describe('newerUiState (estado de la interfaz al cargar el Log)', () => {
   });
 });
 
+describe('filtro Paths: menú de selección múltiple', () => {
+  const REPOS = [{ name: 'taskly', rel: 'taskly', root: '/w/taskly' }, { name: 'api', rel: 'api', root: '/w/api' }, { name: 'tools', rel: 'tools', root: '/w/tools' }];
+  const FILE = '/w/taskly/src/task.js';
+
+  /** Una página con el filtro Paths aplicado (`applied`): el código real de main.js con el DOM y el estado de fuera simulados. */
+  function page(applied = { roots: ['/w/taskly'], paths: [FILE] }) {
+    const sent: any[] = [], picks: any[] = [];
+    const data = { repos: REPOS, logFilterSeq: 0 };
+    const pre = 'let filterChanging = false, pathsPending = null, pathsTimer = 0, pathsSeq = 0, logFilterSeq = 0;';
+    const stubs = {
+      vscode: { postMessage: (m: unknown) => sent.push(m) }, data, ICON: { check: '✓' },
+      logFilters: () => applied, pathLabel: (p: string) => p.split('/').pop(),
+      pickLogFilter: (key: string) => picks.push({ key, sentBefore: sent.length }),
+    };
+    const s = sandbox(MAIN, ['sendLogFilter', 'flushPaths', 'dropPaths', 'clean', 'toggleMultiItem', 'pathsFilterMenu'], stubs, pre, ['pathsPending', 'pathsTimer']);
+    /** Abre el menú: sus filas marcables (repos y rutas) con un <div> falso cada una. */
+    const open = () => {
+      const items = s.pathsFilterMenu();
+      const rows = items.filter((it: any) => it.multi).map((it: any) => {
+        const check = { innerHTML: it.checked ? '✓' : '' };
+        return { it, mi: { attrs: {} as Record<string, string>, check, setAttribute(k: string, v: string) { this.attrs[k] = v; }, querySelector: () => check } };
+      });
+      const click = (i: number, e: object = {}) => s.toggleMultiItem(rows[i].it, i, rows, e);
+      return { items, rows, click, checked: () => rows.map((r: any) => r.it.checked) };
+    };
+    return { ...s, sent, picks, open };
+  }
+  const lastFilter = (p: any) => p.sent.map((m: any) => m.value);
+
+  test('repos y rutas forman un solo grupo marcable, con lo aplicado ya marcado', ({ mock }) => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const m = page().open();
+    assert.equal(m.rows.length, 4);
+    assert.equal(new Set(m.rows.map((r: any) => r.it.multi)).size, 1);
+    assert.deepEqual(m.checked(), [true, false, false, true]);
+  });
+
+  test('un clic marca sin cerrar el menú y manda un solo filtro tras 250 ms', ({ mock }) => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const p = page(); const m = p.open();
+    m.click(1);
+    assert.deepEqual(m.checked(), [true, true, false, true]);
+    assert.equal(p.sent.length, 0, 'no manda al instante');
+    mock.timers.tick(249);
+    assert.equal(p.sent.length, 0);
+    mock.timers.tick(1);
+    assert.equal(p.sent.length, 1);
+    assert.deepEqual(p.sent[0], { type: 'logFilter', key: 'paths', value: { roots: ['/w/taskly', '/w/api'], paths: [FILE] }, seq: 1 });
+  });
+
+  test('varios clics seguidos se juntan en un único filtro, con el estado final', ({ mock }) => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const p = page(); const m = p.open();
+    m.click(1); mock.timers.tick(100); m.click(2); mock.timers.tick(100); m.click(0);   // marca api, marca tools, desmarca taskly
+    mock.timers.tick(250);
+    assert.equal(p.sent.length, 1);
+    assert.deepEqual(lastFilter(p), [{ roots: ['/w/api', '/w/tools'], paths: [FILE] }]);
+  });
+
+  test('Ctrl+clic y Cmd+clic dejan marcado solo ese (también quitan las rutas)', ({ mock }) => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    for (const key of ['ctrlKey', 'metaKey']) {
+      const p = page(); const m = p.open();
+      m.click(2, { [key]: true });
+      assert.deepEqual(m.checked(), [false, false, true, false], key);
+      mock.timers.tick(250);
+      assert.deepEqual(lastFilter(p), [{ roots: ['/w/tools'], paths: [] }], key);
+    }
+  });
+
+  test('desmarcar todo manda el filtro vacío', ({ mock }) => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const p = page(); const m = p.open();
+    m.click(0); m.click(3);
+    mock.timers.tick(250);
+    assert.deepEqual(lastFilter(p), [{ roots: [], paths: [] }]);
+  });
+
+  test('un clic solo actualiza su fila; Ctrl+clic actualiza todas las del grupo', ({ mock }) => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const m = page().open();
+    m.click(1);
+    assert.deepEqual(m.rows.map((r: any) => r.mi.attrs['aria-checked']), [undefined, 'true', undefined, undefined]);
+    assert.equal(m.rows[1].mi.check.innerHTML, '✓');
+    const m2 = page().open();
+    m2.click(1, { ctrlKey: true });
+    assert.deepEqual(m2.rows.map((r: any) => r.mi.attrs['aria-checked']), ['false', 'true', 'false', 'false']);
+    assert.deepEqual(m2.rows.map((r: any) => r.mi.check.innerHTML), ['', '✓', '', '']);
+  });
+
+  test('reabrir el menú antes de que se aplique muestra lo pendiente, no el estado viejo', ({ mock }) => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const p = page(); const m = p.open();
+    m.click(2);                                   // marca tools; aún no se ha mandado
+    assert.deepEqual(p.open().checked(), [true, false, true, true]);
+  });
+
+  test('«Select Files or Folders…» manda antes lo pendiente y no deja un envío duplicado', ({ mock }) => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const p = page(); const m = p.open();
+    m.click(1);
+    m.items.find((it: any) => it.label?.startsWith('Select Files')).act();
+    assert.equal(p.sent.length, 1);
+    assert.deepEqual(p.picks, [{ key: 'paths', sentBefore: 1 }], 'el filtro pendiente sale antes de abrir el selector');
+    mock.timers.tick(500);
+    assert.equal(p.sent.length, 1);
+  });
+
+  test('dropPaths (Clear, doble clic en una rama) cancela lo pendiente', ({ mock }) => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const p = page(); const m = p.open();
+    m.click(2);
+    p.dropPaths();
+    mock.timers.tick(500);
+    assert.equal(p.sent.length, 0);
+    assert.equal(p.get_pathsPending(), null);
+    assert.equal(p.get_pathsTimer(), 0);
+  });
+
+  test('cada filtro lleva un número, uno más que el anterior', ({ mock }) => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const p = page(); const m = p.open();
+    m.click(1); mock.timers.tick(250);
+    m.click(2); mock.timers.tick(250);
+    assert.deepEqual(p.sent.map((s: any) => s.seq), [1, 2]);
+  });
+});
+
 describe('reglas de CSP en media/*.js', () => {
   for (const [name, src] of SCRIPTS) {
     const code = stripComments(src);

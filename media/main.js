@@ -2064,6 +2064,24 @@
     return true;
   }
 
+  /**
+   * Clic en un elemento de un grupo marcable (it.multi: la función del grupo; it.value: el valor de
+   * la opción). El menú no se cierra (solo al pinchar fuera o con Esc). Clic marca o desmarca esta
+   * opción; Ctrl/Cmd+clic deja marcada solo esta. El grupo recibe de una vez los valores marcados.
+   * rows: las filas del menú ({ it, mi }); idx: la de este elemento.
+   */
+  function toggleMultiItem(it, idx, rows, e) {
+    const only = e.ctrlKey || e.metaKey;
+    const group = rows.filter(r => r.it.multi === it.multi);
+    if (only) { group.forEach(r => { r.it.checked = r.it === it; }); } else { it.checked = !it.checked; }
+    for (const r of only ? group : [rows[idx]]) {
+      r.mi.setAttribute('aria-checked', String(r.it.checked));
+      const c = r.mi.querySelector('.mi-check');
+      if (c) { c.innerHTML = r.it.checked ? ICON.check : ''; }
+    }
+    it.multi(group.filter(r => r.it.checked).map(r => r.it.value));
+  }
+
   function showMenu(items, x, y, opts = {}) {
     closeMenus();
     openMenu(items, x, y, 0, null, opts);
@@ -2134,21 +2152,7 @@
         e.stopPropagation();
         if (it.disabled) { return; }
         if (it.submenu) { openSub(idx); return; }
-        // Grupo marcable (it.multi: función del grupo, it.value: valor de la opción). El menú no se
-        // cierra (solo al pinchar fuera o con Esc). Clic marca o desmarca esta opción; Ctrl/Cmd+clic
-        // deja marcada solo esta. El grupo recibe de una vez los valores marcados.
-        if (it.multi) {
-          const only = e.ctrlKey || e.metaKey;
-          const group = rows.filter(r => r.it.multi === it.multi);
-          if (only) { group.forEach(r => { r.it.checked = r.it === it; }); } else { it.checked = !it.checked; }
-          for (const r of only ? group : [rows[idx]]) {
-            r.mi.setAttribute('aria-checked', String(r.it.checked));
-            const c = r.mi.querySelector('.mi-check');
-            if (c) { c.innerHTML = r.it.checked ? ICON.check : ''; }
-          }
-          it.multi(group.filter(r => r.it.checked).map(r => r.it.value));
-          return;
-        }
+        if (it.multi) { toggleMultiItem(it, idx, rows, e); return; }
         closeMenus();
         it.act && it.act();
       });
