@@ -66,10 +66,17 @@ function parseRevisionUri(uri: vscode.Uri): { root: string; ref: string; rel: st
   }
 }
 
-/** Abre el archivo del árbol de trabajo (rel dentro de root); avisa si ya no existe. */
+/**
+ * Abre el archivo del árbol de trabajo (rel dentro de root); avisa si ya no existe. Una carpeta
+ * (p. ej. un repo anidado, que git lista como «dir/», o un enlace a una carpeta) no se puede abrir
+ * como documento: se muestra en el Explorador.
+ */
 async function showWorkingFile(root: string, rel: string, viewColumn = vscode.ViewColumn.Active) {
   const abs = safeRepoPath(root, rel);
   if (!abs) { return; }
+  const isDir = await fs.stat(abs).then(s => s.isDirectory(), () => undefined);   // undefined: no existe
+  if (isDir === undefined) { vscode.window.showWarningMessage(`${rel} doesn't exist in the working tree.`); return; }
+  if (isDir) { await vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(abs)); return; }
   try {
     // Al lado del Log, sin quitarle el foco: si no, el grupo nuevo pasaría a ser el activo y cada
     // archivo de una selección múltiple abriría otro grupo más a la derecha
@@ -2078,7 +2085,20 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
         this.post({ type: 'changePreview', key, kind: 'diff', text: text.slice(0, MAX), truncated: text.length > MAX });
         return;
       }
-      const buf = await fs.readFile(safeRepoPath(repo.root, c.path)!);
+      const abs = safeRepoPath(repo.root, c.path)!;
+      const st = await fs.lstat(abs);
+      if (st.isSymbolicLink()) {
+        // Git guarda el destino del enlace, no lo que hay detrás (puede ser una carpeta)
+        this.post({ type: 'changePreview', key, kind: 'file', text: await fs.readlink(abs) });
+        return;
+      }
+      if (st.isDirectory()) {
+        // Sin contenido que enseñar: p. ej. un repo anidado, que git lista como «dir/» sin seguimiento
+        const nested = await fs.access(path.join(abs, '.git')).then(() => true, () => false);
+        this.post({ type: 'changePreview', key, kind: 'file', directory: nested ? 'repo' : 'dir', text: '' });
+        return;
+      }
+      const buf = await fs.readFile(abs);
       if (buf.subarray(0, 8000).includes(0)) {
         this.post({ type: 'changePreview', key, kind: 'file', binary: true, text: '' });
         return;

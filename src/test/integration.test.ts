@@ -5,7 +5,7 @@
  */
 import { test, describe, afterEach } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { writeFileSync, rmSync } from 'fs';
+import { writeFileSync, rmSync, mkdirSync, symlinkSync } from 'fs';
 import * as path from 'path';
 import { openPanel, fakeWebview, spyGit, until, sleep, stubState, stubConfig, Panel, Msg } from './harness';
 import { TestRepo, tmpDir, rm } from './helpers';
@@ -608,5 +608,88 @@ describe('borrar varias ramas y tags a la vez', () => {
     const p = await open(r.root);
     await deleteRefs(p, [ref('refs/tags/v1'), ref('refs/tags/v2')]);
     assert.deepEqual(tags(r), ['keep']);
+  });
+});
+
+describe('carpetas en Local Changes (repos anidados, enlaces a carpetas): sin EISDIR', () => {
+  /** Un repo con otro repo dentro, que git lista como la carpeta sin seguimiento «inner/». */
+  function withNestedRepo() {
+    const r = newRepo();
+    const dir = path.join(r.root, 'inner');
+    mkdirSync(dir);
+    TestRepo.init(dir).commit('i1', { 'i.txt': 'i\n' });
+    mkdirSync(path.join(r.root, 'plain'));
+    writeFileSync(path.join(r.root, 'plain', 'p.txt'), 'p\n');
+    return r;
+  }
+  const preview = async (p: Panel, change: object) => {
+    const from = p.posted.length;
+    await p.send({ type: 'previewChange', change });
+    return p.waitFor('changePreview', { from });
+  };
+
+  test('git lista el repo anidado como una carpeta sin seguimiento', async () => {
+    const p = await open(withNestedRepo().root);
+    const f = (lastOf(p, 'changes').files as any[]).find(x => x.path === 'inner/' && x.repo === 0);
+    assert.ok(f, 'inner/ aparece en Local Changes');
+    assert.equal(f.group, 'untracked');
+  });
+
+  test('la vista previa de un repo anidado no da EISDIR: dice que es un repo anidado', async () => {
+    const r = withNestedRepo();
+    const p = await open(r.root);
+    const m = await preview(p, { repo: 0, group: 'untracked', path: 'inner/' });
+    assert.equal(m.error, undefined);
+    assert.equal(m.directory, 'repo');
+    assert.equal(m.text, '');
+  });
+
+  test('la vista previa de una carpeta normal tampoco da EISDIR', async () => {
+    const p = await open(withNestedRepo().root);
+    const m = await preview(p, { repo: 0, group: 'untracked', path: 'plain' });
+    assert.equal(m.error, undefined);
+    assert.equal(m.directory, 'dir');
+  });
+
+  test('los archivos de siempre se siguen viendo (sin seguimiento y binarios)', async () => {
+    const r = withNestedRepo();
+    writeFileSync(path.join(r.root, 'nuevo.txt'), 'hola\n');
+    writeFileSync(path.join(r.root, 'bin.dat'), Buffer.from([1, 2, 0, 3]));
+    const p = await open(r.root);
+    const t = await preview(p, { repo: 0, group: 'untracked', path: 'nuevo.txt' });
+    assert.deepEqual([t.error, t.directory, t.text], [undefined, undefined, 'hola\n']);
+    const b = await preview(p, { repo: 0, group: 'untracked', path: 'bin.dat' });
+    assert.equal(b.binary, true);
+  });
+
+  test('doble clic en una carpeta: se muestra en el Explorador, sin el aviso «no existe»', async () => {
+    const r = withNestedRepo();
+    const p = await open(r.root);
+    stubState.commands = []; stubState.warnings = []; stubState.shown = [];
+    await p.send({ type: 'openChange', change: { repo: 0, group: 'untracked', path: 'inner/' } });
+    assert.deepEqual(stubState.warnings, []);
+    assert.equal(stubState.shown.length, 0, 'no se intenta abrir como documento');
+    assert.equal(stubState.commands.length, 1);
+    assert.equal(stubState.commands[0][0], 'revealInExplorer');
+    assert.equal((stubState.commands[0][1] as { fsPath: string }).fsPath, path.join(r.root, 'inner'));
+  });
+
+  test('un archivo que ya no existe sigue avisando de que no existe', async () => {
+    const r = withNestedRepo();
+    const p = await open(r.root);
+    stubState.warnings = [];
+    await p.send({ type: 'openChange', change: { repo: 0, group: 'untracked', path: 'fantasma.txt' } });
+    assert.equal(stubState.warnings.length, 1);
+    assert.match(stubState.warnings[0], /doesn't exist in the working tree/);
+  });
+
+  test('un enlace simbólico a una carpeta: la vista previa enseña el destino del enlace', async (t) => {
+    const r = withNestedRepo();
+    try { symlinkSync('plain', path.join(r.root, 'enlace'), 'dir'); } catch { t.skip('este sistema no deja crear enlaces simbólicos'); return; }
+    const p = await open(r.root);
+    const m = await preview(p, { repo: 0, group: 'untracked', path: 'enlace' });
+    assert.equal(m.error, undefined);
+    assert.equal(m.directory, undefined);
+    assert.equal(m.text, 'plain');
   });
 });

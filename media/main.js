@@ -2632,6 +2632,8 @@
       html = `<div class="empty error">${esc(preview.error)}</div>`;
     } else if (preview.binary) {
       html = '<div class="empty">Binary file.</div>';
+    } else if (preview.directory) {
+      html = `<div class="empty">${preview.directory === 'repo' ? 'Nested Git repository (a folder with its own .git).' : 'Directory.'}</div>`;
     } else {
       blkStage = preview.kind === 'diff' && change.status !== 'D' ? (change.group === 'unstaged' ? 'stage' : change.group === 'staged' ? 'unstage' : '') : '';
       html = `<div class="diff${blkStage ? ' two-btn' : ''}">${preview.kind === 'diff' ? diffRows(preview.text, change.status !== 'D') : fileRows(preview.text, change.group === 'conflicts')}</div>`;

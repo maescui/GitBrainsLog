@@ -16,3 +16,4 @@ Los cambios de cada versión de GitBrainsLog. El formato sigue [Keep a Changelog
 ### Corregido
 
 - **Borrar varios tags a la vez.** Con varios tags seleccionados en el árbol de ramas, la papelera (y la tecla Supr) salía desactivada con el aviso de que la rama actual y las protegidas no se pueden borrar, aunque no hubiera ninguna rama. Ahora se borran todos los tags con una sola confirmación (solo los locales, el remoto no se toca), también mezclados con ramas; la rama actual y las protegidas se siguen saltando.
+- **`EISDIR: illegal operation on a directory, read` en Local Changes.** Los repos que tienen otro repo dentro (git lo lista como una carpeta sin seguimiento, `inner/`) daban ese error al seleccionar la carpeta, y el doble clic avisaba de que no existía. Ahora la vista previa dice que es un repo anidado (o una carpeta), el doble clic la muestra en el Explorador y los enlaces simbólicos enseñan su destino.
