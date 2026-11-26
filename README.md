@@ -36,6 +36,7 @@ o en VS Code: *Extensions ▸ ⋯ ▸ Install from VSIX…*
 - **Grafo de commits** con un color fijo por rama (el mismo en cada recarga y en todos los repos). La rama principal (`main` o `master`) va siempre en la columna de la izquierda, aunque haya ramas más recientes. Las aristas que unen commits muy lejanos se cortan con una flecha que, al pulsarla, salta al otro extremo, como en JetBrains.
 - **Panel de ramas** con Local, Remote y Tags en árbol, indicadores ↑/↓, buscador, ramas favoritas (estrella) y ramas protegidas (candado). Doble clic en una rama filtra el log por ella.
 - **Filtros** junto al buscador: *Branch*, *User*, *Date* y *Paths*. Se combinan y filtran en git, así que valen sobre todo el historial.
+- **Búsqueda** por mensaje, autor (nombre o correo) o el principio de un hash, sin distinguir mayúsculas. La hace git sobre **todo el historial** del log (la misma rama, filtros y repos), no solo sobre los commits cargados: no hace falta pulsar *Load more* para encontrarlo.
 - **Detalles** del commit seleccionado: archivos cambiados (doble clic abre el diff), mensaje completo, autor y padres enlazados.
 - **Menús contextuales** de commit (Cherry-Pick, Checkout Revision, Reset Current Branch to Here, Revert, Undo Commit, New Branch, New Tag, Create Patch…) y de rama (Checkout, Rebase, Merge, Update, Push, Rename, Delete, Compare…).
 - **Varios commits a la vez**: Ctrl/Cmd+clic o Shift+clic y, con el clic derecho, *Cherry-Pick*, *Compare Versions*, *Squash*, *Fixup* y *Drop* (rebase interactivo sin salir de VS Code).

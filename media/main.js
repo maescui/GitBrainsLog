@@ -67,6 +67,11 @@
   let reachCache = new Map(); // HEAD → commits de la vista alcanzables desde él (inCurrent)
   let details = null;
   let search = '';
+  // Búsqueda en TODO el historial (la hace git, en la extensión), no solo en lo cargado
+  let searchHits = null;      // { q (en minúsculas), commits, truncated, error } con lo que encontró git
+  let searchPending = false;  // hay una búsqueda pedida sin contestar
+  let searchSeq = 0;          // número de la última pedida: las respuestas de otras se descartan
+  let searchTimer = 0;
   let branchSearch = '';
   let selectedTreeKey = null;          // último nodo pulsado del árbol (ancla de Shift+clic)
   let selectedTreeKeys = new Set();    // nodos seleccionados (Ctrl/Shift+clic selecciona varias ramas)
@@ -186,6 +191,7 @@
         return;
       case 'changes': return onChanges(m);
       case 'changePreview': return onChangePreview(m);
+      case 'searchResults': return onSearchResults(m);
       case 'stashes': return onStashes(m);
       case 'stashFiles': return onStashFiles(m);
       case 'confirm': return showConfirm(m);
@@ -507,6 +513,8 @@
     renderFilters();
     renderTree();
     applySearch(false);
+    // Con otros commits o filtros, lo que encontró git puede haber cambiado: se vuelve a pedir
+    if (search.trim()) { requestSearch(0); }
     const refiltered = filterChanging;
     filterChanging = false;
     // La selección múltiple se conserva con los commits que sigan en el log
@@ -551,18 +559,66 @@
     }
   }
 
+  /** ¿Coincide el commit con la búsqueda q (ya en minúsculas)? Principio del hash, asunto, autor o correo. */
+  function matchCommit(c, q) {
+    return (c.sha || c.hash).startsWith(q) ||
+      c.subject.toLowerCase().includes(q) ||
+      c.author.toLowerCase().includes(q) ||
+      c.email.toLowerCase().includes(q);
+  }
+
+  /**
+   * Commits que se ven con esta búsqueda: lo que ha encontrado git en todo el historial, si ya
+   * contestó para este texto; mientras llega, lo que coincide de lo ya cargado.
+   */
+  function visibleCommits(commits, search, hits) {
+    const q = search.trim().toLowerCase();
+    if (!q) { return commits; }
+    if (hits && hits.q === q && !hits.error) { return hits.commits; }
+    return commits.filter(c => matchCommit(c, q));
+  }
+
+  /** Aviso bajo los resultados: se está buscando en todo el historial, falló, o hay más de los que se enseñan. */
+  function searchNote() {
+    const q = search.trim().toLowerCase();
+    if (!q) { return ''; }
+    if (searchHits && searchHits.q === q) {
+      if (searchHits.error) { return `Search in the whole history failed: ${searchHits.error}`; }
+      return searchHits.truncated ? `Showing the first ${searchHits.commits.length} matches. Refine the search to see fewer.` : '';
+    }
+    return searchPending ? 'Searching the whole history…' : '';
+  }
+
+  /** Pide a la extensión que busque en todo el historial, tras una pausa si se sigue escribiendo. */
+  function requestSearch(delay = 250) {
+    clearTimeout(searchTimer);
+    const q = search.trim();
+    if (!q) { searchPending = false; searchHits = null; return; }
+    searchPending = true;
+    searchTimer = setTimeout(() => vscode.postMessage({ type: 'searchLog', q, seq: ++searchSeq }), delay);
+  }
+
+  /** Llega lo que ha encontrado git. Vale solo si es de la última búsqueda pedida y del texto que hay ahora. */
+  function onSearchResults(m) {
+    const q = search.trim().toLowerCase();
+    if (m.seq !== searchSeq || !q || String(m.q).trim().toLowerCase() !== q) { return; }
+    searchPending = false;
+    searchHits = { q, commits: m.commits || [], truncated: !!m.truncated, error: m.error };
+    applySearch();
+    // Si el commit seleccionado sigue en la lista, se queda; si no, el primero
+    if (!selected || !indexByHash.has(selected)) {
+      listEl.scrollTop = 0;
+      if (view[0]) { select(view[0].hash); }
+    }
+  }
+
   function applySearch(keepScroll = true) {
     if (!data) { return; }
     applyRepoColumn();
     const q = search.trim().toLowerCase();
-    view = !q ? data.commits : data.commits.filter(c =>
-      (c.sha || c.hash).startsWith(q) ||
-      c.subject.toLowerCase().includes(q) ||
-      c.author.toLowerCase().includes(q) ||
-      c.email.toLowerCase().includes(q)
-    );
+    view = visibleCommits(data.commits, search, searchHits);
     indexByHash = new Map(view.map((c, i) => [c.hash, i]));
-    const total = view.length + (data.hasMore && !q ? 1 : 0);
+    const total = view.length + ((data.hasMore && !q) || searchNote() ? 1 : 0);
     inner.style.height = `${total * ROW_H}px`;
     if (!keepScroll) { /* conserva scroll del navegador */ }
     renderRows(true);
@@ -594,8 +650,12 @@
     if (data.hasMore && showGraph && end >= view.length) {
       html += `<div class="load-more" data-top="${view.length * ROW_H}"><button class="link-btn" data-act="load-more">Load more commits</button></div>`;
     }
+    const note = searchNote();
+    if (note && end >= view.length) {
+      html += `<div class="load-more" data-top="${view.length * ROW_H}"><span class="muted">${esc(note)}</span></div>`;
+    }
     if (!view.length) {
-      html = `<div class="empty">${search ? 'No commits match this search.' : 'This branch has no commits yet.'}</div>`;
+      html = `<div class="empty">${search.trim() ? (note || 'No commits match this search.') : 'This branch has no commits yet.'}</div>`;
     }
     inner.innerHTML = html;
     applyPositions(inner);
@@ -1022,6 +1082,9 @@
   const logSearch = /** @type {HTMLInputElement} */ ($('#log-search'));
   logSearch.addEventListener('input', () => {
     search = logSearch.value;
+    // Mientras tanto se ve lo cargado que coincide; git busca en todo el historial y lo completa
+    if (searchHits && searchHits.q !== search.trim().toLowerCase()) { searchHits = null; }
+    requestSearch();
     applySearch();
     // Si el commit seleccionado sigue en la lista, se queda centrado en él; si no, arriba del todo
     if (selected && indexByHash.has(selected)) { centerOn(selected); }

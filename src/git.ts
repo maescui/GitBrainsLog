@@ -313,21 +313,40 @@ export class Git {
 
   /** Log en orden de fecha; con ref filtra a esa rama, sin ref muestra todo. */
   async getLog(ref: string | null, max: number, filters: LogFilters = EMPTY_FILTERS): Promise<LogCommit[]> {
-    // Campos y commits separados por NUL (-z): es lo único que no puede ir en un mensaje (\x1f y
-    // \x1e sí). time es la fecha de autor (la que se muestra); ctime, la del commit, con la que
-    // git ordena (--date-order) y con la que mergeLogs junta varios repos
-    const args = ['log', '-z', '--date-order', `--max-count=${max}`, `--format=%H%x00%P%x00%an%x00%ae%x00%at%x00%ct%x00%s`];
+    return this.runLog([`--max-count=${max}`], ref, filters, true);
+  }
+
+  /**
+   * Campos y commits separados por NUL (-z): es lo único que no puede ir en un mensaje (\x1f y
+   * \x1e sí). time es la fecha de autor (la que se muestra); ctime, la del commit, con la que
+   * git ordena (--date-order) y con la que mergeLogs junta varios repos
+   */
+  private static readonly LOG_FORMAT = '--format=%H%x00%P%x00%an%x00%ae%x00%at%x00%ct%x00%s';
+
+  /**
+   * Qué commits mira un log: la rama (`ref`), o todas (`null`), o ninguna en concreto (`false`:
+   * los commits ya vienen en `extra`), con los filtros de fecha, rutas y first-parent, y los
+   * autores si se piden.
+   */
+  private logScope(ref: string | null | false, filters: LogFilters, withAuthors: boolean): string[] {
+    const args: string[] = [];
     // Autores como texto literal (-F) y unidos con «o»: --author=A --author=B
-    if (filters.authors.length) { args.push('-F', ...filters.authors.map(a => `--author=${a}`)); }
+    if (withAuthors && filters.authors.length) { args.push('-F', ...filters.authors.map(a => `--author=${a}`)); }
     if (filters.since) { args.push(`--since=${filters.since}`); }
     if (filters.until) { args.push(`--until=${filters.until}`); }
     if (filters.firstParent) { args.push('--first-parent'); }
     if (ref) {
       args.push(ref);
-    } else {
+    } else if (ref === null) {
       args.push('--exclude=refs/stash', '--all');
     }
     args.push('--', ...filters.paths);
+    return args;
+  }
+
+  /** git log con el formato de LogCommit; `extra` va antes del alcance (--max-count, --grep…). */
+  private async runLog(extra: string[], ref: string | null | false, filters: LogFilters, withAuthors: boolean): Promise<LogCommit[]> {
+    const args = ['log', '-z', '--date-order', Git.LOG_FORMAT, ...extra, ...this.logScope(ref, filters, withAuthors)];
     let out: string;
     try {
       out = await this.run(args);
@@ -350,6 +369,57 @@ export class Git {
       });
     }
     return commits;
+  }
+
+  /**
+   * Búsqueda en TODO el historial del log (la misma rama, filtros y rutas, no solo los commits
+   * cargados): commits cuyo mensaje o autor (nombre o correo) contienen `query`, o cuyo hash
+   * empieza por ella; sin distinguir mayúsculas y como texto literal. Del más nuevo al más viejo,
+   * como mucho `max` (`truncated` si había más). git une --author y --grep con «y», así que son
+   * búsquedas distintas cuyos resultados se juntan.
+   */
+  async searchLog(ref: string | null, query: string, max: number, filters: LogFilters = EMPTY_FILTERS): Promise<{ commits: LogCommit[]; truncated: boolean }> {
+    const q = query.trim();
+    if (!q) { return { commits: [], truncated: false }; }
+    const found = new Map<string, LogCommit>();
+    const add = (cs: LogCommit[]) => { for (const c of cs) { found.set(c.hash, c); } };
+
+    // Mensaje (asunto y cuerpo), con los filtros del log (también el de usuario: aquí se unen con «y»)
+    add(await this.runLog(['-F', '-i', `--grep=${q}`], ref, filters, true));
+
+    // Autor, nombre o correo (git recorta la fecha de la cabecera al comparar). Sin el filtro de
+    // usuario en git: varios --author se unen con «o» y aquí tiene que ser «y», así que se aplica después
+    const byUser = (c: LogCommit) => !filters.authors.length || filters.authors.some(a => `${c.author} <${c.email}>`.includes(a));
+    add((await this.runLog(['-F', '-i', `--author=${q}`], ref, filters, false)).filter(byUser));
+
+    // Hash: el principio de un hash (4 a 40 cifras hexadecimales) que sea un commit del log
+    if (/^[0-9a-f]{4,40}$/i.test(q)) { add(await this.commitsByHashPrefix(q.toLowerCase(), ref, filters)); }
+
+    const all = [...found.values()].sort((a, b) => b.ctime - a.ctime || (a.hash < b.hash ? -1 : 1));
+    return { commits: all.slice(0, max), truncated: all.length > max };
+  }
+
+  /** Commits cuyo hash empieza por `prefix`, solo si están en el log (alcance y filtros). */
+  private async commitsByHashPrefix(prefix: string, ref: string | null, filters: LogFilters): Promise<LogCommit[]> {
+    let candidates: string[];
+    try {
+      candidates = (await this.run(['rev-parse', `--disambiguate=${prefix}`])).split('\n').map(s => s.trim()).filter(Boolean);
+    } catch { return []; }
+    // Los que están en el log: alcanzables desde su rama (o desde alguna rama, tag o HEAD). El prefijo
+    // puede ser el de un árbol o un blob: no son commits y inLog los descarta
+    const reachable: string[] = [];
+    for (const h of candidates) { if (await this.inLog(h, ref)) { reachable.push(h); } }
+    if (!reachable.length) { return []; }
+    // ...y que pasen los filtros (usuario, fechas, rutas): se aplican a esos commits sin recorrer nada más
+    return this.runLog(['--no-walk=unsorted', ...reachable], false, filters, true);
+  }
+
+  /** ¿El commit forma parte del log de esa rama (o de todas las ramas, tags y HEAD si ref es null)? */
+  private async inLog(hash: string, ref: string | null): Promise<boolean> {
+    const ok = (p: Promise<unknown>) => p.then(() => true, () => false);
+    if (ref) { return ok(this.run(['merge-base', '--is-ancestor', hash, ref])); }
+    const refs = await this.run(['for-each-ref', '--contains', hash, '--count=1', '--format=x', 'refs/heads', 'refs/remotes', 'refs/tags']).catch(() => '');
+    return refs.trim() !== '' || ok(this.run(['merge-base', '--is-ancestor', hash, 'HEAD']));   // HEAD separado
   }
 
   async getCommitDetails(hash: string): Promise<CommitDetails> {

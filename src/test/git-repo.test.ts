@@ -959,3 +959,163 @@ describe('Git.gitDirs (directorios que vigilan los watchers)', () => {
     assert.equal(real(d.common), real(d.dir));
   });
 });
+
+describe('Git.searchLog (búsqueda en todo el historial)', () => {
+  let r: TestRepo, git: Git;
+  const h: Record<string, string> = {};
+  const ANA = 'Ana García <ana@x.es>', LUIS = 'Luis Martín <luis@y.com>';
+  before(() => {
+    r = TestRepo.init();
+    h.c1 = commitAs(r, ANA, 'Arreglar login', { 'a.txt': '1\n' });
+    h.c2 = commitAs(r, LUIS, 'Add ÑANDÚ cache', { 'b.txt': '1\n' });
+    h.c3 = commitAs(r, ANA, 'Refactor: parser.* [wip]', { 'a.txt': '2\n' });
+    h.c4 = commitAs(r, LUIS, 'bump deps\n\nsecreto-en-el-cuerpo', { 'c.txt': '1\n' });
+    h.c5 = commitAs(r, ANA, 'Merge de luis', { 'a.txt': '3\n' });
+    r.git('switch', '-q', '-c', 'feature', h.c2);
+    h.f1 = commitAs(r, LUIS, 'Feature unique-zzz', { 'f.txt': '1\n' });
+    r.git('switch', '-q', 'main');
+    // Un commit que ya no cuelga de ninguna rama (HEAD separado y se vuelve a main)
+    r.git('switch', '-q', '--detach', h.c1);
+    h.orphan = commitAs(r, ANA, 'huerfano-xyz', { 'o.txt': '1\n' });
+    r.git('switch', '-q', 'main');
+    git = new Git(r.root);
+  });
+  after(() => rm(r.root));
+
+  const subjects = async (q: string, ref: string | null = null, f: Partial<LogFilters> = {}, max = 100) =>
+    (await git.searchLog(ref, q, max, F(f))).commits.map(c => c.subject);
+
+  test('por mensaje, sin distinguir mayúsculas', async () => {
+    assert.deepEqual(await subjects('ARREGLAR'), ['Arreglar login']);
+    assert.deepEqual(await subjects('arreglar login'), ['Arreglar login']);
+  });
+
+  test('con acentos y eñes', async () => {
+    assert.deepEqual(await subjects('ñandú'), ['Add ÑANDÚ cache']);
+  });
+
+  test('también por el cuerpo del mensaje', async () => {
+    assert.deepEqual(await subjects('secreto-en-el-cuerpo'), ['bump deps']);
+  });
+
+  test('como texto literal: ".*" y "[" no son expresiones regulares', async () => {
+    assert.deepEqual(await subjects('.*'), ['Refactor: parser.* [wip]']);
+    assert.deepEqual(await subjects('[wip]'), ['Refactor: parser.* [wip]']);
+    assert.deepEqual(await subjects('('), []);
+  });
+
+  test('por autor: nombre (con acentos) y correo', async () => {
+    assert.deepEqual((await subjects('garcía')).sort(), ['Arreglar login', 'Merge de luis', 'Refactor: parser.* [wip]', 'huerfano-xyz'].filter(s => s !== 'huerfano-xyz').sort());
+    assert.deepEqual((await subjects('luis@y')).sort(), ['Add ÑANDÚ cache', 'Feature unique-zzz', 'bump deps']);
+  });
+
+  test('si coincide por varios criterios sale una sola vez (mensaje y autor)', async () => {
+    const s = await subjects('luis');   // el autor Luis (3 commits) y el mensaje «Merge de luis» (de Ana)
+    assert.equal(s.length, 4);
+    assert.equal(new Set(s).size, 4);
+    assert.ok(s.includes('Merge de luis'));
+  });
+
+  test('buscar cifras no coincide con la fecha del commit (git la recorta al comparar el autor)', async () => {
+    assert.deepEqual(await subjects('1700'), []);       // los commits de prueba son de 1_700_000_0xx
+    assert.deepEqual(await subjects('+0000'), []);
+  });
+
+  test('pero un autor o un correo con cifras sí se encuentra', async () => {
+    const n = TestRepo.init();
+    try {
+      commitAs(n, 'Cuenta 9981 <u9981@z.org>', 'primero', { 'x.txt': '1\n' });
+      commitAs(n, 'Otra Persona <otra@z.org>', 'segundo', { 'x.txt': '2\n' });
+      const found = async (q: string) => (await new Git(n.root).searchLog(null, q, 10, EMPTY_FILTERS)).commits.map(c => c.subject);
+      assert.deepEqual(await found('9981'), ['primero']);
+      assert.deepEqual(await found('u9981@'), ['primero']);
+    } finally { rm(n.root); }
+  });
+
+  test('por el principio de un hash: completo, corto y en mayúsculas', async () => {
+    assert.deepEqual(await subjects(h.c2), ['Add ÑANDÚ cache']);
+    assert.deepEqual(await subjects(h.c2.slice(0, 7)), ['Add ÑANDÚ cache']);
+    assert.deepEqual(await subjects(h.c2.slice(0, 8).toUpperCase()), ['Add ÑANDÚ cache']);
+  });
+
+  test('un prefijo de 3 cifras o menos no se toma por hash', async () => {
+    // Con 3 cifras no se busca por hash: el commit solo puede salir si ese texto está en su mensaje o su autor
+    const p3 = h.c2.slice(0, 3);
+    const c2 = (await git.searchLog(null, p3, 100, EMPTY_FILTERS)).commits.find(c => c.hash === h.c2);
+    assert.ok(!c2 || `${c2.subject} ${c2.author} ${c2.email}`.toLowerCase().includes(p3), `salió «${c2?.subject}» solo por su hash`);
+    // y con 4 sí sale por el hash
+    assert.ok((await git.searchLog(null, h.c2.slice(0, 4), 100, EMPTY_FILTERS)).commits.some(c => c.hash === h.c2));
+  });
+
+  test('el hash de un árbol no sale (solo commits)', async () => {
+    const tree = r.git('rev-parse', 'HEAD^{tree}').trim();
+    assert.deepEqual(await subjects(tree.slice(0, 10)), []);
+  });
+
+  test('un commit que no cuelga de ninguna rama no sale, ni por mensaje ni por hash', async () => {
+    assert.deepEqual(await subjects('huerfano-xyz'), []);
+    assert.deepEqual(await subjects(h.orphan), []);
+  });
+
+  test('respeta la rama del log: lo de otra rama solo sale con «todas»', async () => {
+    assert.deepEqual(await subjects('unique-zzz'), ['Feature unique-zzz']);
+    assert.deepEqual(await subjects('unique-zzz', 'main'), []);
+    assert.deepEqual(await subjects('unique-zzz', 'feature'), ['Feature unique-zzz']);
+    assert.deepEqual(await subjects(h.f1.slice(0, 8), 'main'), []);
+    assert.deepEqual(await subjects(h.f1.slice(0, 8), 'feature'), ['Feature unique-zzz']);
+  });
+
+  test('el filtro de usuario se une con «y»: por mensaje y por autor', async () => {
+    assert.deepEqual(await subjects('ÑANDÚ', null, { authors: ['Ana'] }), []);                   // el commit es de Luis
+    assert.deepEqual(await subjects('ÑANDÚ', null, { authors: ['Luis'] }), ['Add ÑANDÚ cache']);
+    assert.deepEqual(await subjects('luis', null, { authors: ['Ana'] }), ['Merge de luis']);     // autor Luis no, mensaje sí (y es de Ana)
+    assert.deepEqual(await subjects('luis@y', null, { authors: ['Ana'] }), []);
+    assert.deepEqual((await subjects('garcía', null, { authors: ['Luis'] })), []);
+  });
+
+  test('el filtro de usuario también vale para la búsqueda por hash', async () => {
+    assert.deepEqual(await subjects(h.c2.slice(0, 8), null, { authors: ['Ana'] }), []);
+    assert.deepEqual(await subjects(h.c2.slice(0, 8), null, { authors: ['Luis'] }), ['Add ÑANDÚ cache']);
+  });
+
+  test('respeta los filtros de rutas y de fechas', async () => {
+    assert.deepEqual(await subjects('cache', null, { paths: ['b.txt'] }), ['Add ÑANDÚ cache']);
+    assert.deepEqual(await subjects('Arreglar', null, { paths: ['b.txt'] }), []);
+    assert.deepEqual(await subjects('Arreglar', null, { since: '2100-01-01' }), []);
+    assert.deepEqual(await subjects('Arreglar', null, { until: '2000-01-01' }), []);
+  });
+
+  test('del más nuevo al más viejo', async () => {
+    const found = (await git.searchLog(null, 'a', 100, EMPTY_FILTERS)).commits;
+    assert.ok(found.length >= 4);
+    for (let i = 1; i < found.length; i++) { assert.ok(found[i - 1].ctime >= found[i].ctime, 'orden por fecha'); }
+  });
+
+  test('límite: devuelve los más nuevos y avisa de que hay más', async () => {
+    const all = await git.searchLog(null, 'a', 100, EMPTY_FILTERS);
+    const cut = await git.searchLog(null, 'a', 2, EMPTY_FILTERS);
+    assert.equal(cut.commits.length, 2);
+    assert.equal(cut.truncated, true);
+    assert.deepEqual(cut.commits.map(c => c.hash), all.commits.slice(0, 2).map(c => c.hash));
+    assert.equal(all.truncated, false);
+  });
+
+  test('devuelve lo mismo que getLog para el mismo commit', async () => {
+    const [fromLog] = (await git.getLog(null, 100)).filter(c => c.hash === h.c3);
+    const [fromSearch] = (await git.searchLog(null, 'parser', 100)).commits;
+    assert.deepEqual(fromSearch, fromLog);
+  });
+
+  test('vacía, solo espacios, rama inexistente o repo sin commits: sin error', async () => {
+    assert.deepEqual((await git.searchLog(null, '', 10)).commits, []);
+    assert.deepEqual((await git.searchLog(null, '   ', 10)).commits, []);
+    assert.deepEqual((await git.searchLog('no-existe', 'login', 10)).commits, []);
+    const empty = TestRepo.init();
+    try { assert.deepEqual((await new Git(empty.root).searchLog(null, 'x', 10)).commits, []); } finally { rm(empty.root); }
+  });
+
+  test('un texto que empieza por «-» no se toma por una opción de git', async () => {
+    assert.deepEqual(await subjects('--all'), []);
+    assert.deepEqual(await subjects('-n1'), []);
+  });
+});

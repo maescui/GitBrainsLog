@@ -845,6 +845,143 @@ describe('varias ramas o tags seleccionados: acción Delete', () => {
   });
 });
 
+describe('búsqueda del log: lo cargado y lo que encuentra git en todo el historial', () => {
+  const commit = (hash: string, subject: string, author = 'Ana García', email = 'ana@x.es') =>
+    ({ hash: `0:${hash}`, sha: hash, subject, author, email });
+  const loaded = [commit('abc1234', 'Arreglar login'), commit('def5678', 'Add ÑANDÚ cache', 'Luis Martín', 'luis@y.com')];
+  const { matchCommit, visibleCommits } = sandbox(MAIN, ['matchCommit', 'visibleCommits']);
+
+  test('matchCommit: principio del hash, asunto, autor y correo, sin distinguir mayúsculas', () => {
+    assert.equal(matchCommit(loaded[0], 'abc12'), true);
+    assert.equal(matchCommit(loaded[0], 'arreglar'), true);
+    assert.equal(matchCommit(loaded[1], 'ñandú'), true);
+    assert.equal(matchCommit(loaded[1], 'martín'), true);
+    assert.equal(matchCommit(loaded[1], 'luis@y'), true);
+    assert.equal(matchCommit(loaded[0], 'zzz'), false);
+  });
+
+  test('matchCommit: el hash solo por el principio, no por el medio', () => {
+    assert.equal(matchCommit(loaded[0], 'bc123'), false);
+  });
+
+  test('visibleCommits: sin búsqueda, todo lo cargado', () => {
+    assert.equal(visibleCommits(loaded, '', null), loaded);
+    assert.equal(visibleCommits(loaded, '   ', { q: 'x', commits: [], truncated: false }), loaded);
+  });
+
+  test('visibleCommits: sin respuesta de git todavía, lo cargado que coincide', () => {
+    assert.deepEqual(visibleCommits(loaded, 'login', null), [loaded[0]]);
+    assert.deepEqual(visibleCommits(loaded, 'login', { q: 'otra', commits: [], truncated: false }), [loaded[0]]);
+  });
+
+  test('visibleCommits: con la respuesta de git para ese texto, lo que encontró (aunque no estuviera cargado)', () => {
+    const old = commit('00aa99', 'Un commit muy antiguo que no estaba cargado');
+    const hits = { q: 'antiguo', commits: [old], truncated: false };
+    assert.deepEqual(visibleCommits(loaded, 'antiguo', hits), [old]);
+    assert.deepEqual(visibleCommits(loaded, '  ANTIGUO ', hits), [old], 'sin importar mayúsculas ni espacios');
+  });
+
+  test('visibleCommits: una respuesta con error no vale (se sigue viendo lo cargado)', () => {
+    assert.deepEqual(visibleCommits(loaded, 'login', { q: 'login', commits: [], truncated: false, error: 'boom' }), [loaded[0]]);
+  });
+
+  /** searchNote y onSearchResults con el estado de la página (pre) y sus dependencias simuladas. */
+  function page(search = '') {
+    const calls = { applied: 0, selected: [] as string[], posted: [] as any[] };
+    const stubs = {
+      applySearch: () => { calls.applied++; },
+      listEl: { scrollTop: 7 },
+      select: (h: string) => { calls.selected.push(h); },
+      vscode: { postMessage: (m: unknown) => calls.posted.push(m) },
+    };
+    const pre = `let search = ${JSON.stringify(search)}, searchHits = null, searchPending = false, searchSeq = 0, searchTimer = 0, selected = null, view = [], indexByHash = new Map();`;
+    const s = sandbox(MAIN, ['searchNote', 'requestSearch', 'onSearchResults'], stubs, pre,
+      ['search', 'searchHits', 'searchPending', 'searchSeq', 'selected', 'view', 'indexByHash']);
+    return { ...s, calls, listEl: stubs.listEl };
+  }
+
+  test('searchNote: nada sin búsqueda; «Searching…» mientras git no contesta', () => {
+    assert.equal(page('').searchNote(), '');
+    const p = page('login');
+    assert.equal(p.searchNote(), '');
+    p.set_searchPending(true);
+    assert.equal(p.searchNote(), 'Searching the whole history…');
+  });
+
+  test('searchNote: aviso si hay más resultados de los que se enseñan, y el error si falló', () => {
+    const p = page('login');
+    p.set_searchHits({ q: 'login', commits: new Array(5000), truncated: true });
+    assert.match(p.searchNote(), /Showing the first 5000 matches/);
+    p.set_searchHits({ q: 'login', commits: [], truncated: false, error: 'boom' });
+    assert.match(p.searchNote(), /failed: boom/);
+    p.set_searchHits({ q: 'login', commits: [], truncated: false });
+    assert.equal(p.searchNote(), '');
+  });
+
+  test('requestSearch: pide a git tras 250 ms, y varias teclas seguidas piden una sola vez', ({ mock }) => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const p = page('lo');
+    p.requestSearch(); mock.timers.tick(100);
+    p.set_search('log'); p.requestSearch(); mock.timers.tick(100);
+    p.set_search('login'); p.requestSearch();
+    assert.equal(p.calls.posted.length, 0);
+    assert.equal(p.get_searchPending(), true);
+    mock.timers.tick(250);
+    assert.deepEqual(p.calls.posted, [{ type: 'searchLog', q: 'login', seq: 1 }]);
+    p.requestSearch(0); mock.timers.tick(0);
+    assert.equal(p.calls.posted[1].seq, 2, 'cada petición lleva un número más');
+  });
+
+  test('requestSearch: sin texto no pide nada y borra lo que había', ({ mock }) => {
+    mock.timers.enable({ apis: ['setTimeout'] });
+    const p = page('   ');
+    p.set_searchHits({ q: 'x', commits: [], truncated: false });
+    p.set_searchPending(true);
+    p.requestSearch();
+    mock.timers.tick(1000);
+    assert.equal(p.calls.posted.length, 0);
+    assert.equal(p.get_searchPending(), false);
+    assert.equal(p.get_searchHits(), null);
+  });
+
+  test('onSearchResults: guarda lo encontrado, repinta y deja de estar «buscando»', () => {
+    const p = page('Login');
+    p.set_searchSeq(3); p.set_searchPending(true);
+    p.onSearchResults({ q: ' login ', seq: 3, commits: [commit('aa11', 'x')], truncated: true });
+    assert.deepEqual(p.get_searchHits(), { q: 'login', commits: [commit('aa11', 'x')], truncated: true, error: undefined });
+    assert.equal(p.get_searchPending(), false);
+    assert.equal(p.calls.applied, 1);
+  });
+
+  test('onSearchResults: descarta las respuestas de otra petición o de otro texto', () => {
+    const p = page('login');
+    p.set_searchSeq(3); p.set_searchPending(true);
+    p.onSearchResults({ q: 'login', seq: 2, commits: [commit('aa11', 'x')] });       // petición vieja
+    p.onSearchResults({ q: 'otra', seq: 3, commits: [commit('aa11', 'x')] });        // otro texto
+    assert.equal(p.get_searchHits(), null);
+    assert.equal(p.get_searchPending(), true);
+    assert.equal(p.calls.applied, 0);
+    const empty = page('');
+    empty.set_searchSeq(1);
+    empty.onSearchResults({ q: '', seq: 1, commits: [] });                             // ya no hay búsqueda
+    assert.equal(empty.calls.applied, 0);
+  });
+
+  test('onSearchResults: el commit seleccionado se queda si sigue en la lista; si no, el primero', () => {
+    const keep = page('login');
+    keep.set_searchSeq(1); keep.set_selected('0:abc'); keep.set_indexByHash(new Map([['0:abc', 0]]));
+    keep.onSearchResults({ q: 'login', seq: 1, commits: [] });
+    assert.deepEqual(keep.calls.selected, []);
+    assert.equal(keep.listEl.scrollTop, 7, 'sin tocar el scroll');
+
+    const first = page('login');
+    first.set_searchSeq(1); first.set_selected('0:otro'); first.set_view([commit('f1f1', 'primero')]);
+    first.onSearchResults({ q: 'login', seq: 1, commits: [] });
+    assert.deepEqual(first.calls.selected, ['0:f1f1']);
+    assert.equal(first.listEl.scrollTop, 0);
+  });
+});
+
 describe('reglas de CSP en media/*.js', () => {
   for (const [name, src] of SCRIPTS) {
     const code = stripComments(src);

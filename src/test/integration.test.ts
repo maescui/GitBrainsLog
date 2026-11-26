@@ -8,13 +8,14 @@ import * as assert from 'node:assert/strict';
 import { writeFileSync, rmSync, mkdirSync, symlinkSync, existsSync } from 'fs';
 import * as path from 'path';
 import { openPanel, fakeWebview, spyGit, until, sleep, stubState, stubConfig, Panel, Msg } from './harness';
-import { TestRepo, tmpDir, rm } from './helpers';
+import { execFileSync } from 'child_process';
+import { TestRepo, GIT_ENV, tmpDir, rm } from './helpers';
 import { Git } from '../git';
 import { GitLogViewProvider } from '../extension';
 import { watchSpecs, escAttr } from '../core';
 
 const cleanup: (() => void)[] = [];
-afterEach(() => { cleanup.splice(0).reverse().forEach(f => { try { f(); } catch { /* ya borrado */ } }); delete stubConfig.autoStage; delete stubConfig.repositoryScanMaxDepth; });
+afterEach(() => { cleanup.splice(0).reverse().forEach(f => { try { f(); } catch { /* ya borrado */ } }); delete stubConfig.autoStage; delete stubConfig.repositoryScanMaxDepth; delete stubConfig.maxCommits; });
 
 /** Repo con a.txt, b.txt y c.txt commiteados. */
 function newRepo(extra: Record<string, string> = {}): TestRepo {
@@ -885,5 +886,152 @@ describe('barra del Log (Fetch, Pull, Push): solo en los repos que deja pasar el
     assert.deepEqual(t.calls.pull, []);
     assert.ok(stubState.warnings.some(w => /No remote configured/.test(w)), 'fetch avisa');
     assert.ok(stubState.warnings.some(w => /no upstream branch/.test(w)), 'pull avisa');
+  });
+});
+
+describe('búsqueda del log en todo el historial (no solo lo cargado)', () => {
+  const TOTAL = 130, LOADED = 100;   // el log carga como mucho 100 (mínimo del ajuste maxCommits)
+  const subjectOf = (i: number) => `commit-${String(i).padStart(3, '0')}`;
+  /** Un repo con TOTAL commits (git fast-import: al instante), de dos autores que se alternan; el más viejo es el 1. */
+  function bulkRepo(): TestRepo {
+    const r = TestRepo.init();
+    cleanup.push(() => rm(r.root));
+    let s = '';
+    for (let i = 1; i <= TOTAL; i++) {
+      const who = i % 2 ? 'Ana García <ana@x.es>' : 'Luis Martín <luis@y.com>';
+      const msg = subjectOf(i);
+      s += `commit refs/heads/main\nmark :${i}\nauthor ${who} ${1_700_000_000 + i * 60} +0000\ncommitter ${who} ${1_700_000_000 + i * 60} +0000\n`
+        + `data ${Buffer.byteLength(msg)}\n${msg}\n${i > 1 ? `from :${i - 1}\n` : ''}\n`;
+    }
+    execFileSync('git', ['fast-import', '--quiet'], { cwd: r.root, input: s, env: GIT_ENV });
+    return r;
+  }
+  const search = async (p: Panel, q: string, seq = 1) => {
+    const from = p.posted.length;
+    await p.send({ type: 'searchLog', q, seq });
+    return p.waitFor('searchResults', { from, pred: m => m.seq === seq });
+  };
+  const loadedSubjects = (p: Panel) => (lastOf(p, 'data').commits as any[]).map(c => c.subject);
+
+  test('el log solo carga 100, pero la búsqueda encuentra un commit más viejo', async () => {
+    stubConfig.maxCommits = LOADED;
+    const p = await open(bulkRepo().root);
+    assert.equal(lastOf(p, 'data').commits.length, LOADED);
+    assert.ok(!loadedSubjects(p).includes('commit-005'), 'el commit 5 no está cargado');
+    const m = await search(p, 'commit-005');
+    assert.equal(m.error, undefined);
+    assert.deepEqual(m.commits.map((c: any) => c.subject), ['commit-005']);
+    assert.equal(m.truncated, false);
+  });
+
+  test('por el principio del hash de un commit que no está cargado', async () => {
+    stubConfig.maxCommits = LOADED;
+    const r = bulkRepo();
+    const old = r.git('log', '--format=%H', '--grep=^commit-003$').trim();
+    const p = await open(r.root);
+    assert.ok(!loadedSubjects(p).includes('commit-003'));
+    const m = await search(p, old.slice(0, 9));
+    assert.deepEqual(m.commits.map((c: any) => c.subject), ['commit-003']);
+  });
+
+  test('por autor: todos sus commits del historial, no solo los cargados', async () => {
+    stubConfig.maxCommits = LOADED;
+    const p = await open(bulkRepo().root);
+    const loadedLuis = (lastOf(p, 'data').commits as any[]).filter(c => c.author === 'Luis Martín').length;
+    const m = await search(p, 'luis');
+    assert.equal(m.commits.length, TOTAL / 2);
+    assert.ok(m.commits.length > loadedLuis, 'más que los que había cargados');
+    assert.ok(m.commits.every((c: any) => c.author === 'Luis Martín'));
+  });
+
+  test('cada resultado trae lo que necesita una fila del log (ids con el repo, padres, hash real)', async () => {
+    stubConfig.maxCommits = LOADED;
+    const r = bulkRepo();
+    const p = await open(r.root);
+    const [c] = (await search(p, 'commit-010')).commits;
+    const sha = r.git('log', '--format=%H', '--grep=^commit-010$').trim();
+    const parent = r.git('rev-parse', `${sha}^`).trim();
+    assert.equal(c.sha, sha);
+    assert.equal(c.hash, `0:${sha}`);
+    assert.equal(c.repo, 0);
+    assert.deepEqual(c.parents, [`0:${parent}`]);
+    assert.deepEqual([c.author, c.email, typeof c.time, typeof c.ctime], ['Luis Martín', 'luis@y.com', 'number', 'number']);
+  });
+
+  test('se puede seleccionar un resultado que no estaba cargado y ver sus detalles', async () => {
+    stubConfig.maxCommits = LOADED;
+    const p = await open(bulkRepo().root);
+    const [c] = (await search(p, 'commit-002')).commits;
+    const from = p.posted.length;
+    await p.send({ type: 'selectCommit', hash: c.hash });
+    const d = await p.waitFor('details', { from, pred: m => m.details?.hash === c.hash });
+    assert.equal(d.details.subject ?? d.details.message?.split('\n')[0], 'commit-002');
+  });
+
+  test('varias búsquedas seguidas: solo contesta la última', async () => {
+    stubConfig.maxCommits = LOADED;
+    const p = await open(bulkRepo().root);
+    const from = p.posted.length;
+    await Promise.all([p.send({ type: 'searchLog', q: 'commit-001', seq: 1 }), p.send({ type: 'searchLog', q: 'commit-002', seq: 2 })]);
+    const answers = p.since('searchResults', from);
+    assert.deepEqual(answers.map(m => m.seq), [2], 'la petición vieja se descarta');
+    assert.deepEqual(answers[0].commits.map((c: any) => c.subject), ['commit-002']);
+  });
+
+  test('sin texto, o sin coincidencias: vacío y sin error', async () => {
+    stubConfig.maxCommits = LOADED;
+    const p = await open(bulkRepo().root);
+    for (const q of ['', '   ', 'no-existe-en-ningun-commit']) {
+      const m = await search(p, q, p.posted.length + 1);
+      assert.deepEqual([m.commits, m.truncated, m.error], [[], false, undefined], JSON.stringify(q));
+    }
+  });
+
+  test('un texto con caracteres raros se busca tal cual, sin error', async () => {
+    stubConfig.maxCommits = LOADED;
+    const p = await open(bulkRepo().root);
+    for (const q of ['.*', '[', '(', '\\', '--all', "'; rm -rf /", 'commit-0*']) {
+      const m = await search(p, q, p.posted.length + 1);
+      assert.equal(m.error, undefined, JSON.stringify(q));
+      assert.deepEqual(m.commits, [], JSON.stringify(q));
+    }
+  });
+
+  test('respeta el filtro Paths: solo busca en los repos que deja pasar', async () => {
+    const [a, b] = [newRepo(), newRepo()];
+    a.commit('solo-en-a', { 'a.txt': 'x\n' });
+    b.commit('solo-en-b', { 'b.txt': 'x\n' });
+    const p = await open(a.root, b.root);
+    const idx = (lastOf(p, 'data').repos as any[]).findIndex(r => path.resolve(r.root) === path.resolve(a.root));
+    assert.deepEqual((await search(p, 'solo-en-b', 1)).commits.map((c: any) => c.subject), ['solo-en-b'], 'sin filtro, se encuentra');
+    await p.send({ type: 'logFilter', key: 'paths', value: { roots: [a.root], paths: [] } });
+    assert.deepEqual((await search(p, 'solo-en-b', 2)).commits, [], 'con el filtro en el repo a, no');
+    const inA = (await search(p, 'solo-en-a', 3)).commits;
+    assert.deepEqual(inA.map((c: any) => [c.subject, c.repo]), [['solo-en-a', idx]]);
+  });
+
+  test('respeta el filtro de rama: lo que está solo en otra rama no sale', async () => {
+    const r = newRepo();
+    r.git('switch', '-q', '-c', 'feature');
+    r.commit('solo-en-feature', { 'f.txt': 'x\n' });
+    r.git('switch', '-q', 'main');
+    r.commit('solo-en-main', { 'm.txt': 'x\n' });
+    const p = await open(r.root);
+    assert.equal((await search(p, 'solo-en-feature', 1)).commits.length, 1, 'sin filtro de rama (todas), sale');
+    await p.send({ type: 'filter', ref: 'refs/heads/main' });
+    assert.deepEqual((await search(p, 'solo-en-feature', 2)).commits, [], 'filtrado a main, no');
+    assert.equal((await search(p, 'solo-en-main', 3)).commits.length, 1);
+  });
+
+  test('varios repos: los resultados salen juntos, del más nuevo al más viejo', async () => {
+    const [a, b] = [newRepo(), newRepo()];
+    a.commit('hallazgo uno', { 'a.txt': 'x\n' });
+    b.commit('hallazgo dos', { 'b.txt': 'x\n' });
+    a.commit('hallazgo tres', { 'a.txt': 'y\n' });
+    const p = await open(a.root, b.root);
+    const m = await search(p, 'hallazgo');
+    assert.equal(m.commits.length, 3);
+    for (let i = 1; i < m.commits.length; i++) { assert.ok(m.commits[i - 1].ctime >= m.commits[i].ctime); }
+    assert.deepEqual(new Set(m.commits.map((c: any) => c.repo)), new Set([0, 1]));
   });
 });

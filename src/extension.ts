@@ -497,6 +497,47 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
     return repo.refs.some(r => r.full === f) ? f : null;
   }
 
+  /** Un commit de un repo como lo ve la página: ids «idx:hash» (también los padres), `sha` con el hash real. */
+  private logRow(repo: Repo, c: LogCommit) {
+    return { ...c, sha: c.hash, repo: repo.idx, hash: repo.id(c.hash), parents: c.parents.map(p => repo.id(p)) };
+  }
+
+  /** Búsquedas del log en marcha: solo la última manda (las demás se descartan al terminar). */
+  private readonly searchGen = new Generation();
+  /** Como mucho, tantos resultados de una búsqueda (la lista es virtual: 5000 filas no pesan). */
+  private static readonly SEARCH_MAX = 5000;
+
+  /**
+   * Busca en todo el historial del log (no solo en lo cargado): la misma rama, filtros y rutas que
+   * el log, en cada repo que muestra. Devuelve `searchResults` con el texto y el número con que se
+   * pidió, para que la página descarte las respuestas viejas.
+   */
+  private async searchLog(raw: unknown, seq: unknown) {
+    const q = typeof raw === 'string' ? raw.trim().slice(0, 200) : '';
+    const gen = this.searchGen.begin();
+    const reply = (extra: object) => this.post({ type: 'searchResults', q, seq, commits: [], truncated: false, ...extra });
+    if (!q || !this.repos.length) { reply({}); return; }
+    try {
+      const f = this.logFilters;
+      const max = GitLogViewProvider.SEARCH_MAX;
+      const perRepo = await Promise.all(this.includedRepos().map(async repo => {
+        const ref = this.refFor(repo);
+        if (ref === null) { return { repo, commits: [] as LogCommit[], truncated: false }; }
+        const restrict = f.roots.includes(repo.root) ? [] : this.pathsFor(repo);
+        return { repo, ...(await repo.git.searchLog(ref ?? null, q, max, { ...f, paths: restrict, firstParent: this.firstParent() })) };
+      }));
+      if (this.searchGen.stale(gen)) { return; }
+      const all = perRepo.flatMap(p => p.commits.map(c => ({ repo: p.repo, c })))
+        .sort((a, b) => b.c.ctime - a.c.ctime || a.repo.idx - b.repo.idx);
+      reply({
+        commits: all.slice(0, max).map(({ repo, c }) => this.logRow(repo, c)),
+        truncated: all.length > max || perRepo.some(p => p.truncated),
+      });
+    } catch (e: any) {
+      if (!this.searchGen.stale(gen)) { reply({ error: e.message }); }
+    }
+  }
+
   async refresh() {
     if (!this.view || !this.ready) { return; }
     if (!this.view.visible) { this.pendingWhileHidden = true; return; }
@@ -532,9 +573,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
       }));
       if (this.refreshGen.stale(gen)) { return; }
       const { commits, hasMore } = mergeLogs(perRepo, max);
-      let list = commits.map(({ repo, c }) => ({
-        ...c, sha: c.hash, repo: repo.idx, hash: repo.id(c.hash), parents: c.parents.map(p => repo.id(p)),
-      }));
+      let list = commits.map(({ repo, c }) => this.logRow(repo, c));
       if (filtered) {
         // Con filtros faltan commits intermedios: los padres que no están en la lista se
         // quitan para que el grafo no arrastre carriles que nunca terminan
@@ -906,6 +945,8 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
         return;
       case 'logFilter':
         return this.guard(() => this.setLogFilter(m.key, m.value, m.seq));
+      case 'searchLog':
+        return this.searchLog(m.q, m.seq);
       case 'pickLogFilter':
         return this.guard(() => this.pickLogFilter(m.key));
       case 'loadMore':
