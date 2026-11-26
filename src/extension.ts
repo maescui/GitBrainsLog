@@ -2513,18 +2513,21 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
   // ----- acciones generales (barra de la izquierda) ---------------------------------
 
   private async repoAction(action: string, changes: Change[] = []) {
+    // Fetch, Pull y Push de la barra actúan solo en los repos que deja pasar el filtro Paths (los
+    // que muestra el log, y de los que la barra cuenta los commits entrantes y salientes)
+    const shown = this.includedRepos();
     switch (action) {
       case 'fetch': {
-        const repos = this.repos.filter(r => r.remotes.length);
+        const repos = shown.filter(r => r.remotes.length);
         if (!repos.length) { vscode.window.showWarningMessage('No remote configured.'); return; }
         return this.forEachRepo(repos, r => this.exec(r, ['fetch', '--all', '--prune'], 'Fetching…'));
       }
 
       case 'pull': {
         // Cada repo trae los cambios de su rama actual, si tiene upstream
-        const repos = this.repos.filter(r => r.head.branch && r.currentRef()?.upstream);
+        const repos = shown.filter(r => r.head.branch && r.currentRef()?.upstream);
         if (!repos.length) {
-          vscode.window.showWarningMessage(this.repos.length === 1 && !this.repos[0].head.branch
+          vscode.window.showWarningMessage(shown.length === 1 && !shown[0].head.branch
             ? 'Cannot pull: HEAD is detached.' : 'The current branch has no upstream branch to pull from.');
           return;
         }
@@ -2533,7 +2536,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
       case 'push': {
         // La rama actual de cada repo (la ventana marca solo las que tienen algo que subir)
-        const targets = this.repos.filter(r => r.currentRef()).map(r => ({ repo: r, ref: r.currentRef()! }));
+        const targets = shown.filter(r => r.currentRef()).map(r => ({ repo: r, ref: r.currentRef()! }));
         if (!targets.length) { vscode.window.showWarningMessage('Cannot push: HEAD is detached.'); return; }
         return this.push(targets);
       }

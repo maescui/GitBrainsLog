@@ -813,3 +813,77 @@ describe('grafo: la rama principal en la columna de la izquierda', () => {
     assert.deepEqual(colsOf(p), { f1: 1, c2: 0, c1: 0 });
   });
 });
+
+describe('barra del Log (Fetch, Pull, Push): solo en los repos que deja pasar el filtro Paths', () => {
+  /** Un repo con su remoto (un repo «bare» local) y su rama main siguiendo a origin/main. */
+  function repoWithRemote(): TestRepo {
+    const r = newRepo();
+    const bare = tmpDir();
+    cleanup.push(() => rm(bare));
+    new TestRepo(bare).git('init', '-q', '--bare', '-b', 'main');
+    r.git('remote', 'add', 'origin', bare);
+    r.git('push', '-q', '-u', 'origin', 'main');
+    return r;
+  }
+  const name = (r: TestRepo) => path.basename(r.root);
+
+  /** Abre el panel con estos repos y anota sobre cuáles actúan Fetch, Pull y Push (sin tocar la red). */
+  async function openWith(...repos: TestRepo[]) {
+    const p = await open(...repos.map(r => r.root));
+    const calls = { fetch: [] as string[], pull: [] as string[], push: [] as string[] };
+    p.provider.exec = async (repo: any, args: string[]) => { if (args[0] === 'fetch') { calls.fetch.push(path.basename(repo.root)); } };
+    p.provider.pull = async (repo: any) => { calls.pull.push(path.basename(repo.root)); };
+    p.provider.push = async (targets: any[]) => { calls.push.push(...targets.map(t => path.basename(t.repo.root))); };
+    const bar = async () => { for (const action of ['fetch', 'pull', 'push']) { await p.send({ type: 'repoAction', action }); } };
+    const filter = (value: object) => p.send({ type: 'logFilter', key: 'paths', value });
+    const sorted = (x: string[]) => [...x].sort();
+    return { p, calls, bar, filter, sorted };
+  }
+
+  test('sin filtro, actúan en todos los repos', async () => {
+    const [a, b] = [repoWithRemote(), repoWithRemote()];
+    const t = await openWith(a, b);
+    await t.bar();
+    const all = t.sorted([name(a), name(b)]);
+    assert.deepEqual(t.sorted(t.calls.fetch), all);
+    assert.deepEqual(t.sorted(t.calls.pull), all);
+    assert.deepEqual(t.sorted(t.calls.push), all);
+  });
+
+  test('con el filtro Paths en un repo, solo actúan en ese repo', async () => {
+    const [a, b] = [repoWithRemote(), repoWithRemote()];
+    const t = await openWith(a, b);
+    await t.filter({ roots: [a.root], paths: [] });
+    await t.bar();
+    assert.deepEqual(t.calls, { fetch: [name(a)], pull: [name(a)], push: [name(a)] });
+  });
+
+  test('con el filtro Paths en una carpeta o archivo de un repo, solo actúan en ese repo', async () => {
+    const [a, b] = [repoWithRemote(), repoWithRemote()];
+    const t = await openWith(a, b);
+    await t.filter({ roots: [], paths: [path.join(b.root, 'a.txt')] });
+    await t.bar();
+    assert.deepEqual(t.calls, { fetch: [name(b)], pull: [name(b)], push: [name(b)] });
+  });
+
+  test('al quitar el filtro vuelven a actuar en todos', async () => {
+    const [a, b] = [repoWithRemote(), repoWithRemote()];
+    const t = await openWith(a, b);
+    await t.filter({ roots: [a.root], paths: [] });
+    await t.filter({ roots: [], paths: [] });
+    await t.bar();
+    assert.deepEqual(t.sorted(t.calls.fetch), t.sorted([name(a), name(b)]));
+  });
+
+  test('si el repo filtrado no tiene remoto, avisa y no toca el otro', async () => {
+    const [withRemote, plain] = [repoWithRemote(), newRepo()];
+    const t = await openWith(withRemote, plain);
+    await t.filter({ roots: [plain.root], paths: [] });
+    stubState.warnings = [];
+    await t.bar();
+    assert.deepEqual(t.calls.fetch, [], 'el repo con remoto queda fuera del filtro');
+    assert.deepEqual(t.calls.pull, []);
+    assert.ok(stubState.warnings.some(w => /No remote configured/.test(w)), 'fetch avisa');
+    assert.ok(stubState.warnings.some(w => /no upstream branch/.test(w)), 'pull avisa');
+  });
+});
