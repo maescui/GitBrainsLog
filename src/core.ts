@@ -37,6 +37,17 @@ export function pathInside(root: string, p: string): boolean {
 }
 
 /**
+ * Rutas (relativas a `root`, con «/», sin barra final) de los demás repos de `others` que están
+ * dentro de `root`. Para git son carpetas sin seguimiento del repo de fuera (`?? inner/`), pero la
+ * extensión ya los muestra como repos propios, con sus cambios bajo su propio nodo.
+ */
+export function nestedRepos(root: string, others: string[]): string[] {
+  return others
+    .filter(o => !samePath(o, root) && pathInside(root, o))
+    .map(o => path.relative(root, o).split(path.sep).join('/'));
+}
+
+/**
  * Ruta relativa de un repo que manda el webview, si es segura: dentro del repo (nada de «..»
  * ni rutas absolutas). Devuelve la ruta absoluta, o undefined si se sale.
  */

@@ -3322,7 +3322,7 @@
           fontRow('Interface', '', 'fontFamily', 'fontSize', UI_FONTS, 'sans-serif', 'VS Code', '--vscode-font-family', '--vscode-font-size'), 'font typeface size') +
         card('Repositories',
           item('Repository scan depth', '', num('repositoryScanMaxDepth', 0, 5), 'repositoryScanMaxDepth', '',
-            'Folder levels searched for Git repositories below the opened folder and below each repository found.\n0 = only the opened folder.')) +
+            'Folder levels searched for Git repositories below the opened folder and below each repository found.\n0 = only the opened folder.\nA repository inside another one that the outer repository does not ignore is always found, at any depth.')) +
         '</div>') +
       // Appearance no tiene ajustes propios: al elegirla se ven sus subcategorías una tras otra
       page('appearance', '', '') +

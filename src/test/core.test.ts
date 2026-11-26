@@ -5,6 +5,7 @@ import * as path from 'path';
 import {
   scanDepth, commitsPerPage, MAX_SCAN_DEPTH, MAX_COMMITS_PAGE, mergeArgs, MERGE_OPTIONS, autoBranchColor,
   validateSetting, validFontFamily, validFontSize, mergeLogs, FOLDER_COLOR_TOKENS, samePath, pathInside, safeRepoPath,
+  nestedRepos,
 } from '../core';
 import { MAIN_COLOR } from '../graph';
 
@@ -246,5 +247,31 @@ describe('rutas (samePath, pathInside, safeRepoPath)', () => {
     assert.equal(safeRepoPath(root, '.'), undefined);
     assert.equal(safeRepoPath(root, 'a\0b'), undefined);
     assert.equal(safeRepoPath(root, 42), undefined);
+  });
+});
+
+describe('nestedRepos (repos que viven dentro de otro repo de la lista)', () => {
+  const root = path.resolve('/w/outer');
+  const at = (...p: string[]) => path.join(root, ...p);
+
+  test('devuelve los de dentro, relativos al de fuera y con «/»', () => {
+    assert.deepEqual(nestedRepos(root, [root, at('api'), at('libs', 'core'), path.resolve('/w/otro')]), ['api', 'libs/core']);
+  });
+
+  test('él mismo, los hermanos y los de fuera no cuentan', () => {
+    assert.deepEqual(nestedRepos(root, [root, path.resolve('/w/outer2'), path.resolve('/w'), path.resolve('/x/outer/api')]), []);
+    assert.deepEqual(nestedRepos(root, []), []);
+  });
+
+  test('un repo de nombre parecido («outer2») no se toma por uno de dentro de «outer»', () => {
+    assert.deepEqual(nestedRepos(root, [path.resolve('/w/outer-api')]), []);
+  });
+
+  test('también cuenta los repos anidados dentro de otros anidados', () => {
+    assert.deepEqual(nestedRepos(root, [at('a'), at('a', 'b')]), ['a', 'a/b']);
+  });
+
+  test('en Windows y macOS no distingue mayúsculas, como samePath', { skip: process.platform === 'linux' }, () => {
+    assert.deepEqual(nestedRepos(root, [at('API').replace('outer', 'OUTER')]), ['API']);
   });
 });

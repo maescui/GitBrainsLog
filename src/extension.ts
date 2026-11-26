@@ -12,7 +12,7 @@ import { DialogWindow } from './dialog';
 import { fontAttrs, fontSettings } from './fonts';
 import {
   scanDepth, commitsPerPage, mergeArgs, autoBranchColor, DEFAULT_FOLDER_COLORS, validateSetting, mergeLogs,
-  samePath, pathInside, safeRepoPath, SerialQueue, Generation, watchSpecs, nonce as newNonce, escAttr,
+  samePath, pathInside, safeRepoPath, nestedRepos, SerialQueue, Generation, watchSpecs, nonce as newNonce, escAttr,
 } from './core';
 
 const SCHEME = 'jbgit';
@@ -218,6 +218,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
   dispose() {
     this.flushUiState();
+    clearTimeout(this.initTimer);
     this.repos.forEach(r => r.dispose());
   }
 
@@ -660,13 +661,41 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
   private readonly indexQueue = new SerialQueue();
   private locked<T>(fn: () => Promise<T>): Promise<T> { return this.indexQueue.run(fn); }
 
+  /** Rutas absolutas de repos anidados que ya se han intentado añadir a la lista (para no repetir). */
+  private triedNested = new Set<string>();
+  private initTimer?: NodeJS.Timeout;
+
+  /**
+   * Cambios de un repo sin las carpetas que son otros repos de la lista (repos anidados): git las
+   * lista como carpetas sin seguimiento del de fuera (`?? inner/`), pero ya se ven con sus cambios
+   * bajo su propio nodo, y tratarlas como archivos del de fuera es un error (no se pueden leer,
+   * ni borrar ni añadir como si lo fueran). Si aparece un repo anidado que aún no está en la lista
+   * (p. ej. se acaba de clonar dentro), se vuelve a buscar para que se vea como repo.
+   */
+  private async statusOf(repo: Repo): Promise<LocalChange[]> {
+    const st = await repo.git.getStatus();
+    const dirs = st.filter(f => f.group === 'untracked' && f.path.endsWith('/'));
+    if (!dirs.length) { return st; }
+    const hidden = new Set<string>();
+    for (const f of dirs) {
+      const abs = path.join(repo.root, f.path);
+      if (this.repos.some(o => o !== repo && samePath(o.root, abs))) { hidden.add(f.path); continue; }
+      if (!this.triedNested.has(abs) && await fs.access(path.join(abs, '.git')).then(() => true, () => false)) {
+        this.triedNested.add(abs);
+        clearTimeout(this.initTimer);
+        this.initTimer = setTimeout(() => this.init(), 300);
+      }
+    }
+    return hidden.size ? st.filter(f => !hidden.has(f.path)) : st;
+  }
+
   private async doRefreshChanges() {
     const auto = vscode.workspace.getConfiguration('jbGit').get<boolean>('autoStage', true);
     const errors: string[] = [];
     const all = await Promise.all(this.repos.map(async repo => {
       try {
         const files = await this.locked(async () => {
-          const st = await repo.git.getStatus();
+          const st = await this.statusOf(repo);
           return auto ? this.autoStage(repo, st) : st;
         });
         return files.map(f => ({ ...f, repo: repo.idx }));
@@ -708,7 +737,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
       this.changesTimer = setTimeout(() => this.refreshChanges(), 1000);
       return files;
     }
-    return repo.git.getStatus();
+    return this.statusOf(repo);
   }
 
   private static readonly EXCLUDED_KEY = 'jbGit.excludedFromCommit';
@@ -2321,7 +2350,13 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
             for (const c of cs) {
               if (c.group !== 'untracked') { continue; }
               const abs = safeRepoPath(repo.root, c.path);
-              if (abs) { await vscode.workspace.fs.delete(vscode.Uri.file(abs), { useTrash: true }); }
+              if (!abs) { continue; }
+              // Un repo (carpeta con .git) no se manda a la papelera desde aquí: se perdería su historial
+              if (await fs.access(path.join(abs, '.git')).then(() => true, () => false)) {
+                vscode.window.showWarningMessage(`'${c.path.replace(/\/+$/, '')}' is a Git repository and is not deleted from here. Remove it from the file explorer if you really want to.`);
+                continue;
+              }
+              await vscode.workspace.fs.delete(vscode.Uri.file(abs), { useTrash: true });
             }
           }
           return;
@@ -2343,7 +2378,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
     // la lista de Local Changes da por incluido tiene que entrar en el commit
     const auto = vscode.workspace.getConfiguration('jbGit').get<boolean>('autoStage', true);
     const status = await this.locked(() => Promise.all(this.repos.map(async r => {
-      const st = await r.git.getStatus();
+      const st = await this.statusOf(r);
       return { r, files: auto ? await this.autoStage(r, st) : st };
     })));
     const conflicted = status.filter(s => s.files.some(c => c.group === 'conflicts'));
@@ -2363,7 +2398,13 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
         if (!withChanges.length) { vscode.window.showInformationMessage('Nothing to commit.'); return; }
         const ok = await this.confirm('There are no staged changes.', `Stage all changes, including unversioned files, and commit them${this.inRepos(withChanges)}?`, 'Stage All and Commit');
         if (!ok) { return; }
-        await this.locked(async () => { for (const r of withChanges) { await r.git.run(['add', '-A']); } });
+        await this.locked(async () => {
+          for (const r of withChanges) {
+            // Sin los repos anidados: `git add -A` los añadiría al de fuera como repos incrustados
+            const nested = nestedRepos(r.root, this.repos.map(x => x.root));
+            await r.git.run(['add', '-A', ...(nested.length ? ['--', '.', ...nested.map(p => `:(exclude,literal)${p}`)] : [])]);
+          }
+        });
         targets = withChanges;
       }
     }

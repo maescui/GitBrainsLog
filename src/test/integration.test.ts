@@ -5,7 +5,7 @@
  */
 import { test, describe, afterEach } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { writeFileSync, rmSync, mkdirSync, symlinkSync } from 'fs';
+import { writeFileSync, rmSync, mkdirSync, symlinkSync, existsSync } from 'fs';
 import * as path from 'path';
 import { openPanel, fakeWebview, spyGit, until, sleep, stubState, stubConfig, Panel, Msg } from './harness';
 import { TestRepo, tmpDir, rm } from './helpers';
@@ -14,7 +14,7 @@ import { GitLogViewProvider } from '../extension';
 import { watchSpecs, escAttr } from '../core';
 
 const cleanup: (() => void)[] = [];
-afterEach(() => { cleanup.splice(0).reverse().forEach(f => { try { f(); } catch { /* ya borrado */ } }); delete stubConfig.autoStage; });
+afterEach(() => { cleanup.splice(0).reverse().forEach(f => { try { f(); } catch { /* ya borrado */ } }); delete stubConfig.autoStage; delete stubConfig.repositoryScanMaxDepth; });
 
 /** Repo con a.txt, b.txt y c.txt commiteados. */
 function newRepo(extra: Record<string, string> = {}): TestRepo {
@@ -628,11 +628,92 @@ describe('carpetas en Local Changes (repos anidados, enlaces a carpetas): sin EI
     return p.waitFor('changePreview', { from });
   };
 
-  test('git lista el repo anidado como una carpeta sin seguimiento', async () => {
-    const p = await open(withNestedRepo().root);
-    const f = (lastOf(p, 'changes').files as any[]).find(x => x.path === 'inner/' && x.repo === 0);
-    assert.ok(f, 'inner/ aparece en Local Changes');
-    assert.equal(f.group, 'untracked');
+  const repoNames = (p: Panel) => (lastOf(p, 'data').repos as any[]).map(r => r.name);
+  const filesOf = (p: Panel, repoName: string) => {
+    const idx = repoNames(p).indexOf(repoName);
+    return (lastOf(p, 'changes').files as any[]).filter(f => f.repo === idx);
+  };
+
+  test('un repo dentro de otro es un repo más: sale con su nombre y sus cambios bajo su propio nodo', async () => {
+    const r = withNestedRepo();
+    writeFileSync(path.join(r.root, 'inner', 'nuevo.txt'), 'n\n');
+    const p = await open(r.root);
+    assert.deepEqual(repoNames(p), [path.basename(r.root), 'inner']);
+    assert.deepEqual(filesOf(p, 'inner').map(f => [f.group, f.path]), [['untracked', 'nuevo.txt']]);
+  });
+
+  test('…y el repo de fuera no lo lista como una carpeta sin seguimiento', async () => {
+    const r = withNestedRepo();
+    const p = await open(r.root);
+    assert.deepEqual(filesOf(p, path.basename(r.root)).map(f => f.path), ['plain/p.txt'], 'solo lo suyo');
+  });
+
+  test('se ve aunque esté más hondo que la profundidad de búsqueda (git lo lista)', async () => {
+    stubConfig.repositoryScanMaxDepth = 0;
+    const r = newRepo();
+    const deep = path.join(r.root, 'a', 'b', 'c', 'deep');
+    mkdirSync(deep, { recursive: true });
+    TestRepo.init(deep).commit('d1', { 'd.txt': 'd\n' });
+    const p = await open(r.root);
+    assert.deepEqual(repoNames(p), [path.basename(r.root), 'deep']);
+    assert.ok(!(lastOf(p, 'changes').files as any[]).some(f => f.path.endsWith('deep/')), 'no queda como carpeta del de fuera');
+  });
+
+  test('un repo recién clonado dentro aparece como repo al refrescar, sin reabrir nada', async () => {
+    const r = newRepo();
+    const p = await open(r.root);
+    assert.deepEqual(repoNames(p), [path.basename(r.root)]);
+    const fresh = path.join(r.root, 'fresh');
+    mkdirSync(fresh);
+    TestRepo.init(fresh).commit('f1', { 'f.txt': 'f\n' });
+    await p.provider.refreshChanges();
+    const d = await p.waitFor('data', { pred: m => m.repos.length === 2, timeout: 8000 });
+    assert.deepEqual(d.repos.map((x: any) => x.name), [path.basename(r.root), 'fresh']);
+  });
+
+  test('se trabaja con él: un cambio en el repo anidado se commitea en él y no en el de fuera', async () => {
+    const r = withNestedRepo();
+    const inner = new TestRepo(path.join(r.root, 'inner'));
+    inner.write('i.txt', 'cambiado\n');
+    const outerBefore = r.git('rev-list', '--count', 'HEAD').trim();
+    const p = await open(r.root);
+    assert.equal(filesOf(p, 'inner').find(f => f.path === 'i.txt')?.group, 'staged');
+    const from = p.posted.length;
+    await p.send({ type: 'commit', message: 'cambio en inner', amend: false, push: false });
+    await p.waitFor('committed', { from, timeout: 5000 });
+    assert.equal(inner.git('log', '-1', '--format=%s').trim(), 'cambio en inner');
+    assert.equal(r.git('rev-list', '--count', 'HEAD').trim(), outerBefore, 'el de fuera no cambia');
+  });
+
+  test('«Stage All and Commit» en el repo de fuera no añade el repo anidado como repo incrustado', async () => {
+    const r = withNestedRepo();
+    writeFileSync(path.join(r.root, 'nuevo.txt'), 'n\n');
+    const p = await open(r.root);
+    const from = p.posted.length;
+    const asked = p.waitFor('confirm', { from });
+    const done = p.send({ type: 'commit', message: 'todo', amend: false, push: false });
+    const c = await asked;
+    await p.send({ type: 'confirmResult', id: c.id, ok: true, checked: false });
+    await done;
+    await p.waitFor('committed', { from, timeout: 5000 });
+    const files = r.git('ls-tree', '-r', '--name-only', 'HEAD').trim().split('\n');
+    assert.ok(files.includes('nuevo.txt') && files.includes('plain/p.txt'), 'lo suyo sí');
+    assert.ok(!files.some(f => f.startsWith('inner')), 'el repo anidado no');
+    assert.ok(!/^160000/m.test(r.git('ls-files', '-s')), 'sin entradas de repo incrustado (160000)');
+  });
+
+  test('Delete no manda a la papelera un repo entero', async () => {
+    const r = withNestedRepo();
+    const p = await open(r.root);
+    stubState.warnings = [];
+    const asked = p.waitFor('confirm');
+    const done = p.send({ type: 'changeAction', action: 'delete', changes: [{ repo: 0, group: 'untracked', path: 'inner/' }] });
+    const c = await asked;
+    await p.send({ type: 'confirmResult', id: c.id, ok: true, checked: false });
+    await done;
+    assert.equal(stubState.warnings.length, 1);
+    assert.match(stubState.warnings[0], /'inner' is a Git repository/);
+    assert.ok(existsSync(path.join(r.root, 'inner', '.git')), 'el repo sigue ahí');
   });
 
   test('la vista previa de un repo anidado no da EISDIR: dice que es un repo anidado', async () => {

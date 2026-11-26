@@ -7,7 +7,7 @@ import * as assert from 'node:assert/strict';
 import { mkdirSync, symlinkSync } from 'fs';
 import * as path from 'path';
 import { TestRepo, tmpDir, rm } from './helpers';
-import { findRepositories } from '../git';
+import { findRepositories, nestedRepoDirs } from '../git';
 
 /** Repo nuevo en una carpeta que aún no existe. */
 const repoAt = (p: string) => { mkdirSync(p, { recursive: true }); return TestRepo.init(p); };
@@ -24,14 +24,14 @@ describe('findRepositories', () => {
     outside = tmpDir('jbgit-out-');
     // ws/a                 repo (nivel 1)
     // ws/a/sub             repo anidado, ignorado por a
-    // ws/a/x/y/deep        repo a 3 niveles bajo a
+    // ws/a/x/y/deep        repo a 3 niveles bajo a, ignorado por a
     // ws/b/c               repo (nivel 2)
     // ws/d/e/f             repo (nivel 3)
     // ws/.hidden/r         repo en carpeta oculta (no se entra)
     // ws/node_modules/pkg  repo en dependencias (no se entra)
     // ws/link              enlace (junction) a un repo de fuera (no se sigue)
     const a = repoAt(P('a'));
-    a.commit('a', { '.gitignore': 'sub/\n' });
+    a.commit('a', { '.gitignore': 'sub/\nx/y/deep/\n' });
     repoAt(P('a', 'sub')).commit('sub');
     repoAt(P('a', 'x', 'y', 'deep'));
     repoAt(P('b', 'c'));
@@ -111,5 +111,60 @@ describe('findRepositories', () => {
   test('devuelve rutas nativas (separador del sistema)', async () => {
     const found = await findRepositories([ws], 1);
     for (const p of found) { assert.equal(p, path.normalize(p), `ruta no nativa: ${p}`); }
+  });
+});
+
+// Un repo dentro de otro: git lo lista como carpeta sin seguimiento (`?? n1/`) y se encuentra
+// a cualquier profundidad, sin depender de jbGit.repositoryScanMaxDepth; los ignorados, no
+describe('repos anidados que git ve (sin ignorar)', () => {
+  let ws: string;
+  const P = (...p: string[]) => path.join(ws, ...p);
+  before(() => {
+    ws = tmpDir('jbgit-nest-');
+    // ws/o                     repo de fuera, ignora «ign/» y «p/ign2/»
+    // ws/o/n1                  repo anidado (nivel 1)
+    // ws/o/n1/inner            repo dentro del anidado
+    // ws/o/p/q/r/n2            repo anidado a 4 niveles
+    // ws/o/plain/file.txt      carpeta normal (no es un repo)
+    // ws/o/ign                 repo anidado, ignorado
+    // ws/o/p/ign2              repo anidado a 2 niveles, ignorado
+    const o = repoAt(P('o'));
+    o.commit('o', { '.gitignore': 'ign/\np/ign2/\n', 'a.txt': 'a' });
+    repoAt(P('o', 'n1'));
+    repoAt(P('o', 'n1', 'inner'));
+    repoAt(P('o', 'p', 'q', 'r', 'n2'));
+    mkdirSync(P('o', 'plain'), { recursive: true });
+    o.write('plain/file.txt', 'x');
+    repoAt(P('o', 'ign'));
+    repoAt(P('o', 'p', 'ign2'));
+  });
+  after(() => rm(ws));
+
+  test('con profundidad 0 se encuentran igualmente, también el que está dentro de otro anidado', async () => {
+    assert.deepEqual(norm(await findRepositories([P('o')], 0)),
+      norm([P('o'), P('o', 'n1'), P('o', 'p', 'q', 'r', 'n2'), P('o', 'n1', 'inner')]));
+  });
+
+  test('los repos ignorados por el de fuera solo salen si la profundidad llega', async () => {
+    const found = (d: number) => findRepositories([P('o')], d).then(norm);
+    assert.ok(!(await found(0)).includes(path.resolve(P('o', 'ign'))), 'profundidad 0: no');
+    assert.ok((await found(1)).includes(path.resolve(P('o', 'ign'))), 'profundidad 1: sí');
+    assert.ok(!(await found(1)).includes(path.resolve(P('o', 'p', 'ign2'))), 'a 2 niveles con profundidad 1: no');
+    assert.ok((await found(2)).includes(path.resolve(P('o', 'p', 'ign2'))), 'profundidad 2: sí');
+  });
+
+  test('las carpetas normales no cuentan como repos', async () => {
+    assert.ok(!(await findRepositories([P('o')], 5)).map(p => path.resolve(p)).includes(path.resolve(P('o', 'plain'))));
+  });
+
+  test('no se repite nada aunque lo encuentren el escaneo y git', async () => {
+    const found = norm(await findRepositories([P('o'), P('o', 'n1')], 3));
+    assert.equal(new Set(found).size, found.length);
+  });
+
+  test('nestedRepoDirs: solo las carpetas sin seguimiento que son repos', async () => {
+    assert.deepEqual(norm(await nestedRepoDirs(P('o'))).sort(), norm([P('o', 'n1'), P('o', 'p', 'q', 'r', 'n2')]).sort());
+    assert.deepEqual(await nestedRepoDirs(P('o', 'n1', 'inner')), []);
+    assert.deepEqual(await nestedRepoDirs(P('no-existe')), []);
   });
 });

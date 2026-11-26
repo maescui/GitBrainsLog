@@ -601,7 +601,9 @@ const SKIP_DIRS = new Set(['node_modules', 'bower_components', 'vendor', 'target
  * profundidad (maxDepth, como git.repositoryScanMaxDepth de VS Code) se cuenta desde la
  * carpeta abierta o desde el último repo encontrado. Se recorre por niveles, así los
  * menos profundos van primero. No sigue enlaces simbólicos ni entra en carpetas ocultas
- * o de dependencias.
+ * o de dependencias. Además, cada repo encontrado dice qué repos tiene dentro sin ignorar
+ * (los lista como carpetas sin seguimiento, `?? inner/`): se añaden estén a la profundidad
+ * que estén, para poder verlos y trabajar con ellos como con cualquier otro.
  */
 export async function findRepositories(folders: string[], maxDepth: number): Promise<string[]> {
   const roots: string[] = [];
@@ -635,7 +637,29 @@ export async function findRepositories(folders: string[], maxDepth: number): Pro
       level = next;
     }
   }
+  // Los repos anidados que git ve (sin ignorar), a cualquier profundidad y también dentro de ellos
+  let pending = [...roots];
+  while (pending.length) {
+    const nested = (await Promise.all(pending.map(nestedRepoDirs))).flat();
+    pending = [];
+    for (const dir of nested) {
+      const root = await Git.findRoot(dir);
+      if (root && !roots.includes(root)) { roots.push(root); pending.push(root); }
+    }
+  }
   return roots;
+}
+
+/**
+ * Carpetas de `root` que son repos propios y que git lista como carpetas sin seguimiento
+ * (`?? inner/`): las que no están ignoradas por el repo de fuera.
+ */
+export async function nestedRepoDirs(root: string): Promise<string[]> {
+  let status: LocalChange[];
+  try { status = await new Git(root).getStatus(); } catch { return []; }
+  const dirs = status.filter(f => f.group === 'untracked' && f.path.endsWith('/')).map(f => path.join(root, f.path));
+  const repos = await Promise.all(dirs.map(d => fs.access(path.join(d, '.git')).then(() => d, () => undefined)));
+  return repos.filter((d): d is string => !!d);
 }
 
 export function parseNameStatusZ(out: string): FileChange[] {

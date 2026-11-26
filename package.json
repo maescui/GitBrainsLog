@@ -177,7 +177,7 @@
           "default": 2,
           "minimum": 0,
           "maximum": 5,
-          "description": "Niveles de subcarpetas en los que se buscan repositorios Git, contados desde la carpeta abierta o desde cada repositorio encontrado (submódulos y repos anidados), entre 0 y 5. 0 = solo la carpeta abierta."
+          "description": "Niveles de subcarpetas en los que se buscan repositorios Git, contados desde la carpeta abierta o desde cada repositorio encontrado (submódulos y repos anidados), entre 0 y 5. 0 = solo la carpeta abierta. Un repositorio dentro de otro que el de fuera no ignora se encuentra siempre, a cualquier profundidad."
         },
         "jbGit.autoStage": {
           "type": "boolean",
