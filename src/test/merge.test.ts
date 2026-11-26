@@ -372,7 +372,7 @@ describe('MergePanel (con un webview simulado)', () => {
     vscode.window.createWebviewPanel = () => fp.panel;
     let done = 0;
     await MergePanel.open({ path: '/media' } as any, new Git(repo.root), rel, versions, { ours: 'main', theirs: 'feature' },
-      () => { done++; }, async () => undefined);
+      () => { done++; }, async () => undefined, vscode.ViewColumn.Active);
     await fp.send({ type: 'ready' });
     const init = fp.sent.find(m => m.type === 'init');
     return { ...fp, init, done: () => done };

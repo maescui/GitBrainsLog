@@ -2,7 +2,7 @@
 
 Los mensajes son objetos `{ type, … }`. Esta lista debe coincidir con lo que maneja el código: un test (`tipos de mensaje` en `src/test/webview.test.ts`) la compara con los `case` de `onMessage` (extension.ts) y del listener de `media/main.js`, y falla si falta o sobra alguno. Al añadir o quitar un mensaje hay que actualizarla.
 
-## Hacia la extensión (34)
+## Hacia la extensión (35)
 
 - `ready`
 - `refresh`
@@ -38,6 +38,7 @@ Los mensajes son objetos `{ type, … }`. Esta lista debe coincidir con lo que m
 - `pickMerge`
 - `confirmResult`
 - `dialogResult`
+- `uiState`
 
 ## Hacia el webview (12)
 

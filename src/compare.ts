@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { FileChange, Git, HistoryEntry } from './git';
 import { fontAttrs } from './fonts';
+import { nonce as newNonce } from './core';
 
 /** Árbol vacío de git: el «padre» del commit raíz. */
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
@@ -40,18 +41,20 @@ export class ComparePanel {
     panel.webview.onDidReceiveMessage(m => this.onMessage(m));
   }
 
-  static open(media: vscode.Uri, git: Git, left: string, right: string | undefined, title: string, openNative: OpenNative) {
-    ComparePanel.create(media, git, left, right, title, openNative);
+  static open(media: vscode.Uri, git: Git, left: string, right: string | undefined, title: string, openNative: OpenNative,
+    column: vscode.ViewColumn) {
+    ComparePanel.create(media, git, left, right, title, openNative, column);
   }
 
   /** Show History de un archivo o carpeta. */
-  static openHistory(media: vscode.Uri, git: Git, target: HistoryTarget, title: string, openNative: OpenNative) {
-    ComparePanel.create(media, git, '', undefined, title, openNative, target);
+  static openHistory(media: vscode.Uri, git: Git, target: HistoryTarget, title: string, openNative: OpenNative,
+    column: vscode.ViewColumn) {
+    ComparePanel.create(media, git, '', undefined, title, openNative, column, target);
   }
 
   private static create(media: vscode.Uri, git: Git, left: string, right: string | undefined, title: string,
-    openNative: OpenNative, history?: HistoryTarget) {
-    const panel = vscode.window.createWebviewPanel('jbGit.compare', title, vscode.ViewColumn.Active, {
+    openNative: OpenNative, column: vscode.ViewColumn, history?: HistoryTarget) {
+    const panel = vscode.window.createWebviewPanel('jbGit.compare', title, column, {
       enableScripts: true,
       retainContextWhenHidden: true,
       localResourceRoots: [media],
@@ -138,7 +141,7 @@ export class ComparePanel {
 
   private html(media: vscode.Uri): string {
     const webview = this.panel.webview;
-    const nonce = Array.from({ length: 32 }, () => Math.floor(Math.random() * 36).toString(36)).join('');
+    const nonce = newNonce();
     const css = webview.asWebviewUri(vscode.Uri.joinPath(media, 'compare.css'));
     const js = webview.asWebviewUri(vscode.Uri.joinPath(media, 'compare.js'));
     return `<!DOCTYPE html>

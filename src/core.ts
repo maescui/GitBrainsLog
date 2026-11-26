@@ -7,6 +7,16 @@
 import * as path from 'path';
 import { MAIN_COLOR } from './graph';
 
+/** Texto para un atributo del HTML de un webview (entre comillas dobles). */
+export function escAttr(s: string): string {
+  return s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
+}
+
+/** Nonce de la CSP de un webview: los <script> solo se cargan si lo llevan. */
+export function nonce(): string {
+  return Array.from({ length: 32 }, () => Math.floor(Math.random() * 36).toString(36)).join('');
+}
+
 // ---------------------------------------------------------------------------
 // Rutas
 // ---------------------------------------------------------------------------

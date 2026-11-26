@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { validFontFamily, validFontSize } from './core';
+import { validFontFamily, validFontSize, escAttr as esc } from './core';
 
 /**
  * Fuente de la interfaz de la extensión (Settings ▸ General ▸ Fonts): por defecto la de VS
@@ -25,7 +25,6 @@ export function fontSettings(): FontSettings {
  */
 export function fontAttrs(): string {
   const f = fontSettings();
-  const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
   const attrs: string[] = [];
   if (validFontFamily(f.fontFamily) && f.fontFamily.trim()) { attrs.push(`data-font="${esc(f.fontFamily.trim())}"`); }
   if (validFontSize(f.fontSize) && f.fontSize) { attrs.push(`data-font-size="${f.fontSize}"`); }

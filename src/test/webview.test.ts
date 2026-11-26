@@ -649,6 +649,22 @@ function stripComments(src: string): string {
 }
 const SCRIPTS: [string, string][] = [['main.js', MAIN], ['compare.js', COMPARE], ['merge.js', MERGE], ['dialog.js', DIALOG]];
 
+describe('newerUiState (estado de la interfaz al cargar el Log)', () => {
+  const { newerUiState } = sandbox(MAIN, ['newerUiState']);
+  test('gana el más reciente, sea el del webview o el de la extensión', () => {
+    assert.deepEqual(newerUiState({ tab: 'log', savedAt: 2 }, { tab: 'stash', savedAt: 1 }), { tab: 'log', savedAt: 2 });
+    assert.deepEqual(newerUiState({ tab: 'log', savedAt: 1 }, { tab: 'stash', savedAt: 2 }), { tab: 'stash', savedAt: 2 });
+  });
+  test('sin fecha (guardado antes de savedAt) cuenta como el más antiguo', () => {
+    assert.deepEqual(newerUiState({ tab: 'log' }, { tab: 'stash', savedAt: 1 }), { tab: 'stash', savedAt: 1 });
+    assert.deepEqual(newerUiState({ tab: 'log' }, null), { tab: 'log' });
+  });
+  test('sin ninguno, vacío', () => {
+    assert.deepEqual(newerUiState(undefined, null), {});
+    assert.deepEqual(newerUiState(undefined, { tab: 'stash' }), { tab: 'stash' });
+  });
+});
+
 describe('reglas de CSP en media/*.js', () => {
   for (const [name, src] of SCRIPTS) {
     const code = stripComments(src);

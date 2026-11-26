@@ -27,6 +27,7 @@ o en VS Code: *Extensions ▸ ⋯ ▸ Install from VSIX…*
 1. Abre una carpeta con un repositorio Git (o con varios dentro).
 2. Pulsa **Alt+9** (**Cmd+9** en macOS), como en JetBrains, o ejecuta *Show Git Log*. También está el icono **Git Log** en el panel inferior.
 3. Cuatro pestañas, que se pueden reordenar arrastrándolas: **Local Changes**, **Stash**, **Log** y **Settings**.
+4. Para tenerlo más grande, los iconos de la barra del panel lo abren en una **pestaña del editor** o en una **ventana nueva** (útil con un segundo monitor). Mientras tanto el panel inferior muestra un aviso con *Move Back Here*; cerrar la pestaña también lo devuelve al panel.
 
 ## Qué trae
 
@@ -118,7 +119,10 @@ Se editan en la pestaña **Settings** o en los ajustes de VS Code (`jbGit.*`).
 
 | Comando | Qué hace |
 |---|---|
-| *Show Git Log* (`jbGit.focus`) | Abre el panel. |
+| *Show Git Log* (`jbGit.focus`) | Abre el panel (o la pestaña del editor, si está ahí). |
+| *Open in Editor Tab* (`jbGit.openInEditor`) | Lleva el Log a una pestaña del editor. |
+| *Open in New Window* (`jbGit.openInNewWindow`) | Lleva el Log a una pestaña en una ventana nueva. |
+| *Move Back to Panel* (`jbGit.moveToPanel`) | Cierra la pestaña y devuelve el Log al panel inferior. |
 | *Refresh* (`jbGit.refresh`) | Recarga el log. |
 | *Show History* (`jbGit.showHistory`) | Historial de un archivo o carpeta (explorador, pestaña y editor). |
 

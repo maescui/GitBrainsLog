@@ -23,7 +23,17 @@ export const stubState = {
   errors: [] as string[],
   warnings: [] as string[],
   infos: [] as string[],
-  reset() { this.folders = []; this.watchers = []; this.errors = []; this.warnings = []; this.infos = []; },
+  /** Comandos que ha ejecutado la extensión (vscode.commands.executeCommand), con sus argumentos. */
+  commands: [] as unknown[][],
+  /** Archivos abiertos con window.showTextDocument, con sus opciones. */
+  shown: [] as { path: string; opts: any }[],
+  /** Grupos de pestañas del editor (window.tabGroups.all) y las pestañas que se han cerrado. */
+  tabGroups: [] as { viewColumn: number; tabs: any[] }[],
+  closedTabs: [] as unknown[],
+  reset() {
+    this.folders = []; this.watchers = []; this.errors = []; this.warnings = []; this.infos = []; this.commands = []; this.shown = [];
+    this.tabGroups = []; this.closedTabs = [];
+  },
   /** Dispara un evento en todos los watchers vivos con esa base y ese patrón (fsPath = el archivo que cambia). */
   fire(kind: 'change' | 'create' | 'delete', where: { base: string; pattern?: string }, fsPath: string) {
     const norm = (x: string) => x.replace(/\\/g, '/').toLowerCase();
@@ -68,9 +78,21 @@ const stub: any = {
     showWarningMessage: async (m: string) => { stubState.warnings.push(m); },
     showInformationMessage: async (m: string) => { stubState.infos.push(m); },
     withProgress: async (_o: unknown, fn: () => Promise<unknown>) => fn(),
+    showTextDocument: async (uri: { fsPath: string }, opts: unknown) => { stubState.shown.push({ path: uri.fsPath, opts }); },
+    tabGroups: {
+      get all() { return stubState.tabGroups; },
+      onDidChangeTabs: () => ({ dispose() { /* nada */ } }),
+      close: async (tab: any) => {
+        stubState.closedTabs.push(tab);
+        for (const g of stubState.tabGroups) { g.tabs = g.tabs.filter(t => t !== tab); }
+        stubState.tabGroups = stubState.tabGroups.filter(g => g.tabs.length);
+        return true;
+      },
+    },
   },
-  commands: { executeCommand: noop },
-  ViewColumn: { One: 1, Active: -1, Beside: -2 },
+  TabInputWebview: class { constructor(readonly viewType: string) { /* nada */ } },
+  commands: { executeCommand: async (...a: unknown[]) => { stubState.commands.push(a); } },
+  ViewColumn: { One: 1, Two: 2, Active: -1, Beside: -2 },
   ConfigurationTarget: { Global: 1, Workspace: 2 },
   QuickPickItemKind: { Separator: -1, Default: 0 },
   ProgressLocation: { Notification: 15 },

@@ -23,7 +23,8 @@
   "activationEvents": [
     "workspaceContains:.git",
     "workspaceContains:*/.git",
-    "workspaceContains:*/*/.git"
+    "workspaceContains:*/*/.git",
+    "onWebviewPanel:jbGit.logEditor"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -67,6 +68,24 @@
         "title": "Open File",
         "category": "Git Log",
         "icon": "$(go-to-file)"
+      },
+      {
+        "command": "jbGit.openInEditor",
+        "title": "Open in Editor Tab",
+        "category": "Git Log",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "jbGit.openInNewWindow",
+        "title": "Open in New Window",
+        "category": "Git Log",
+        "icon": "$(multiple-windows)"
+      },
+      {
+        "command": "jbGit.moveToPanel",
+        "title": "Move Back to Panel",
+        "category": "Git Log",
+        "icon": "$(layout-panel)"
       }
     ],
     "menus": {
@@ -93,6 +112,16 @@
       ],
       "view/title": [
         {
+          "command": "jbGit.openInEditor",
+          "when": "view == jbGit.log && !jbGit.inEditor",
+          "group": "navigation@0"
+        },
+        {
+          "command": "jbGit.openInNewWindow",
+          "when": "view == jbGit.log && !jbGit.inEditor",
+          "group": "navigation@1"
+        },
+        {
           "command": "jbGit.refresh",
           "when": "view == jbGit.log",
           "group": "navigation@2"
@@ -103,12 +132,26 @@
           "command": "jbGit.openFile",
           "when": "isInDiffEditor && resourceScheme == jbgit",
           "group": "navigation@1"
+        },
+        {
+          "command": "jbGit.openInNewWindow",
+          "when": "activeWebviewPanelId == 'jbGit.logEditor' && !isAuxiliaryEditorPart",
+          "group": "navigation@1"
+        },
+        {
+          "command": "jbGit.moveToPanel",
+          "when": "activeWebviewPanelId == 'jbGit.logEditor'",
+          "group": "navigation@2"
         }
       ],
       "commandPalette": [
         {
           "command": "jbGit.openFile",
           "when": "false"
+        },
+        {
+          "command": "jbGit.moveToPanel",
+          "when": "jbGit.inEditor"
         }
       ]
     },

@@ -7,10 +7,11 @@ import { test, describe, afterEach } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { writeFileSync, rmSync } from 'fs';
 import * as path from 'path';
-import { openPanel, spyGit, until, sleep, stubState, stubConfig, Panel, Msg } from './harness';
+import { openPanel, fakeWebview, spyGit, until, sleep, stubState, stubConfig, Panel, Msg } from './harness';
 import { TestRepo, tmpDir, rm } from './helpers';
 import { Git } from '../git';
-import { watchSpecs } from '../core';
+import { GitLogViewProvider } from '../extension';
+import { watchSpecs, escAttr } from '../core';
 
 const cleanup: (() => void)[] = [];
 afterEach(() => { cleanup.splice(0).reverse().forEach(f => { try { f(); } catch { /* ya borrado */ } }); delete stubConfig.autoStage; });
@@ -301,5 +302,216 @@ describe('watchers: dónde vigila la extensión', () => {
     stubState.fire('change', { base: tree.dir, pattern: tree.pattern }, path.join(wt, '.git'));
     await sleep(800);                                 // más que el debounce de 300 ms
     assert.equal(p.since('changes', from).length, 0);
+  });
+});
+
+describe('filtros del log', () => {
+  test('cada log lleva el número del último cambio de filtro aplicado', async () => {
+    const r = newRepo();
+    const p = await open(r.root);
+    assert.equal(lastOf(p, 'data').logFilterSeq, 0);
+    const data = p.waitFor('data');
+    await p.send({ type: 'logFilter', key: 'paths', value: { roots: [r.root], paths: [] }, seq: 7 });
+    const d = await data;
+    assert.equal(d.logFilterSeq, 7);
+    assert.deepEqual(d.logFilters.roots, [r.root]);
+  });
+});
+
+describe('Log en una pestaña del editor', () => {
+  /** WebviewPanel falso sobre fakeWebview: además se puede cerrar. */
+  function fakeEditor() {
+    const fake = fakeWebview();
+    const disposers: (() => void)[] = [];
+    const panel: any = {
+      visible: true, active: true, title: '', iconPath: undefined, webview: fake.webview,
+      onDidChangeViewState: () => ({ dispose() { /* nada */ } }),
+      onDidDispose: (cb: () => void) => { disposers.push(cb); return { dispose() { /* nada */ } }; },
+      reveal: () => undefined,
+      dispose: () => disposers.splice(0).forEach(f => f()),
+    };
+    return { ...fake, panel };
+  }
+
+  /** Pestaña del Log restaurada por VS Code al recargar y sin cargar todavía, en el grupo viewColumn. */
+  function restoredLogTab(viewColumn = 1) {
+    const vscode = require('vscode');
+    const tab: any = { input: new vscode.TabInputWebview(`mainThreadWebview-${GitLogViewProvider.editorType}`) };
+    tab.group = { viewColumn, tabs: [tab] };
+    stubState.tabGroups = [tab.group];
+    return tab;
+  }
+
+  /** La extensión ha puesto el contexto jbGit.inEditor de los menús a true alguna vez. */
+  const inEditorSet = () => stubState.commands.some(c => c[0] === 'setContext' && c[1] === 'jbGit.inEditor' && c[2] === true);
+
+  test('el Log pasa a la pestaña y vuelve al panel al cerrarla', async () => {
+    const r = newRepo();
+    const p = await open(r.root);
+    const side = p.provider.sideView;
+    const ed = fakeEditor();
+    p.provider.adoptEditor(ed.panel);
+    // El panel inferior muestra el aviso; la pestaña, el Log
+    assert.match(side.webview.html, /open in an editor tab/);
+    assert.match(ed.panel.webview.html, /id="log-list"/);
+    assert.equal(ed.panel.title, `Git Log (${path.basename(r.root)})`);
+    const data = ed.waitFor('data');
+    await ed.send({ type: 'ready' });
+    assert.equal((await data).commits.length, 1);
+    // Lo que mande la página vieja del panel ya no llega a onMessage
+    const before = p.posted.length;
+    await p.send({ type: 'refresh' });
+    await sleep(200);
+    assert.equal(p.since('data', before).length, 0);
+    // «Move Back Here» del aviso pide su comando; solo se aceptan los de la lista
+    stubState.commands = [];
+    await p.send({ type: 'command', id: 'jbGit.moveToPanel' });
+    await p.send({ type: 'command', id: 'workbench.action.closeWindow' });
+    assert.deepEqual(stubState.commands, [['jbGit.moveToPanel']]);
+    // Al cerrar la pestaña el panel vuelve a cargar el Log
+    await p.provider.moveToPanel();
+    assert.equal(p.provider.editor, undefined);
+    assert.match(side.webview.html, /id="log-list"/);
+    const back = p.waitFor('data');
+    await p.send({ type: 'ready' });
+    await back;
+  });
+
+  test('la página del Log lleva el último estado de la interfaz, venga del panel o de la pestaña', async () => {
+    const r = newRepo();
+    const p = await open(r.root);
+    const side = p.provider.sideView;
+    const has = (html: string, state: object) => html.includes(`data-ui-state="${escAttr(JSON.stringify(state))}"`);
+    const first = { tab: 'stash', commitDraft: 'WIP "x" <y>' };
+    await p.send({ type: 'uiState', state: first });
+    const ed = fakeEditor();
+    p.provider.adoptEditor(ed.panel);
+    assert.ok(has(ed.panel.webview.html, first));
+    // Lo que cambie en la pestaña vuelve al panel al cerrarla
+    await ed.send({ type: 'uiState', state: { tab: 'log' } });
+    ed.panel.dispose();
+    assert.ok(has(side.webview.html, { tab: 'log' }));
+  });
+
+  test('con el Log en una pestaña a la vista, los diffs se abren en el grupo de al lado', async () => {
+    const r = newRepo();
+    const p = await open(r.root);
+    assert.equal(p.provider.column(), -1);              // ViewColumn.Active
+    const ed = fakeEditor();
+    p.provider.adoptEditor(ed.panel);
+    assert.equal(p.provider.column(), -2);              // ViewColumn.Beside
+    // Si la acción no sale del Log (p. ej. Show History desde el explorador, con otro grupo activo),
+    // el grupo activo: «al lado» sería al lado de ese otro y abriría uno nuevo cada vez
+    ed.panel.active = false;
+    assert.equal(p.provider.column(), -1);
+  });
+
+  test('una confirmación abierta al mover el Log se da por cancelada, sin preguntar otra vez', async () => {
+    const r = newRepo();
+    const p = await open(r.root);
+    const asked = p.waitFor('confirm');
+    const answer = p.provider.confirm('Hard reset to abc?', 'All uncommitted changes will be lost.', 'Reset');
+    await asked;
+    p.provider.adoptEditor(fakeEditor().panel);
+    assert.equal(await answer, false);
+    assert.deepEqual(stubState.warnings, []);           // ni el modal nativo
+  });
+
+  test('varios archivos abiertos a la vez van todos al grupo de al lado, sin quitarle el foco al Log', async () => {
+    const r = newRepo();
+    r.write('a.txt', 'a2\n'); r.write('b.txt', 'b2\n');
+    const p = await open(r.root);
+    p.provider.adoptEditor(fakeEditor().panel);
+    const changes = ['a.txt', 'b.txt'].map(n => fileOf(lastOf(p, 'changes'), n));
+    stubState.shown = [];
+    await p.provider.changeAction('open', changes);
+    assert.deepEqual(stubState.shown.map(s => [path.basename(s.path), s.opts.viewColumn, s.opts.preserveFocus]),
+      [['a.txt', -2, true], ['b.txt', -2, true]]);
+  });
+
+  test('pestaña restaurada sin cargar: el panel muestra el aviso y Show Git Log la recrea en su grupo', async () => {
+    const r = newRepo();
+    const p = await open(r.root);
+    const side = p.provider.sideView;
+    const vscode = require('vscode');
+    // Al recargar la ventana VS Code restaura la pestaña del Log, pero no la carga hasta mostrarla
+    const tab = restoredLogTab(2);
+    p.provider.resolveWebviewView(side);
+    assert.match(side.webview.html, /open in an editor tab/);
+    assert.ok(inEditorSet());
+    // Show Git Log (o Open in Editor Tab): una pestaña nueva en el mismo grupo, y la vieja se cierra
+    const ed = fakeEditor();
+    let opts: any;
+    const orig = vscode.window.createWebviewPanel;
+    vscode.window.createWebviewPanel = (_t: string, _n: string, o: unknown) => { opts = o; return ed.panel; };
+    try { await p.provider.reveal(); } finally { vscode.window.createWebviewPanel = orig; }
+    assert.equal(p.provider.editor, ed.panel);
+    assert.equal(opts.viewColumn, 2);
+    assert.deepEqual(stubState.closedTabs, [tab]);
+  });
+
+  test('Move Back Here con la pestaña restaurada sin cargar la cierra y el Log vuelve al panel', async () => {
+    const r = newRepo();
+    const p = await open(r.root);
+    const side = p.provider.sideView;
+    const tab = restoredLogTab();
+    p.provider.resolveWebviewView(side);
+    assert.match(side.webview.html, /open in an editor tab/);
+    await p.provider.moveToPanel();
+    assert.deepEqual(stubState.closedTabs, [tab]);
+    assert.match(side.webview.html, /id="log-list"/);
+  });
+
+  test('con el Log cargado en el panel, una pestaña restaurada que aparece después no lo saca de él', async () => {
+    const r = newRepo();
+    const p = await open(r.root);
+    const side = p.provider.sideView;
+    restoredLogTab();                                    // llega después de cargar el panel
+    p.provider.onTabsChanged();
+    await p.provider.reveal(true);                       // Alt+9 o un diálogo de confirmación
+    assert.equal(p.provider.editor, undefined);
+    assert.match(side.webview.html, /id="log-list"/);
+    assert.ok(!inEditorSet());
+  });
+
+  test('al cerrar la pestaña del Log, el panel carga el Log aunque VS Code aún liste la pestaña', async () => {
+    const r = newRepo();
+    const p = await open(r.root);
+    const side = p.provider.sideView;
+    const ed = fakeEditor();
+    p.provider.adoptEditor(ed.panel);
+    restoredLogTab();                                    // la pestaña que se está cerrando
+    ed.panel.dispose();
+    assert.match(side.webview.html, /id="log-list"/);
+    stubState.tabGroups = [];
+    p.provider.onTabsChanged();
+    assert.match(side.webview.html, /id="log-list"/);
+  });
+
+  test('si se cierra la pestaña restaurada sin cargarla, el Log vuelve al panel', async () => {
+    const r = newRepo();
+    const p = await open(r.root);
+    const side = p.provider.sideView;
+    restoredLogTab();
+    p.provider.resolveWebviewView(side);
+    assert.match(side.webview.html, /open in an editor tab/);
+    stubState.tabGroups = [];
+    p.provider.onTabsChanged();
+    assert.match(side.webview.html, /id="log-list"/);
+    const data = p.waitFor('data');
+    await p.send({ type: 'ready' });
+    await data;
+  });
+
+  test('una segunda pestaña restaurada se cierra y se queda la primera', async () => {
+    const r = newRepo();
+    const p = await open(r.root);
+    const a = fakeEditor(), b = fakeEditor();
+    p.provider.adoptEditor(a.panel);
+    let closed = false;
+    b.panel.dispose = () => { closed = true; };
+    p.provider.adoptEditor(b.panel);
+    assert.ok(closed);
+    assert.equal(p.provider.editor, a.panel);
   });
 });

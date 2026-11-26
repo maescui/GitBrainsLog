@@ -40,6 +40,35 @@ export interface Panel {
   dispose(): void;
 }
 
+/**
+ * Webview falso: guarda lo que le manda la extensión (`posted`, `waitFor`, `since`) y deja
+ * mandarle mensajes como si vinieran de la página (`send`).
+ */
+export function fakeWebview() {
+  const posted: Msg[] = [];
+  const waiters: (() => void)[] = [];
+  let onMessage: ((m: Msg) => unknown) | undefined;
+  const webview = {
+    options: {}, html: '', cspSource: 'stub', asWebviewUri: (u: unknown) => u,
+    postMessage: (m: Msg) => { posted.push(m); waiters.splice(0).forEach(w => w()); return Promise.resolve(true); },
+    onDidReceiveMessage: (cb: (m: Msg) => unknown) => { onMessage = cb; return { dispose() { /* nada */ } }; },
+  };
+  const waitFor: Panel['waitFor'] = (type, o = {}) => new Promise((resolve, reject) => {
+    const from = o.from ?? posted.length;
+    const timer = setTimeout(() => reject(new Error(`Timeout esperando '${type}' (llegaron: ${posted.slice(from).map(m => m.type).join(', ') || 'nada'})`)), o.timeout ?? 10000);
+    const check = () => {
+      const m = posted.slice(from).find(x => x.type === type && (!o.pred || o.pred(x)));
+      if (m) { clearTimeout(timer); resolve(m); } else { waiters.push(check); }
+    };
+    check();
+  });
+  return {
+    webview, posted, waitFor,
+    send: async (m: Msg) => onMessage?.(m),
+    since: (type: string, from: number) => posted.slice(from).filter(m => m.type === type),
+  };
+}
+
 /** Abre el panel sobre estas carpetas del workspace y espera a que cargue el log y los cambios. */
 export async function openPanel(folders: string[], opts: { wait?: boolean } = {}): Promise<Panel> {
   stubState.reset();
@@ -51,47 +80,26 @@ export async function openPanel(folders: string[], opts: { wait?: boolean } = {}
   };
   const provider: any = new GitLogViewProvider(context);
 
-  const posted: Msg[] = [];
-  const waiters: (() => void)[] = [];
-  let onMessage: ((m: Msg) => unknown) | undefined;
+  const fake = fakeWebview();
   const view: any = {
-    visible: true, description: undefined,
-    webview: {
-      options: {}, html: '', cspSource: 'stub', asWebviewUri: (u: unknown) => u,
-      postMessage: (m: Msg) => { posted.push(m); waiters.splice(0).forEach(w => w()); return Promise.resolve(true); },
-      onDidReceiveMessage: (cb: (m: Msg) => unknown) => { onMessage = cb; return { dispose() { /* nada */ } }; },
-    },
+    visible: true, description: undefined, webview: fake.webview,
     onDidChangeVisibility: () => ({ dispose() { /* nada */ } }),
     onDidDispose: () => ({ dispose() { /* nada */ } }),
     show: () => undefined,
   };
   provider.resolveWebviewView(view);
 
-  const waitFor: Panel['waitFor'] = (type, o = {}) => new Promise((resolve, reject) => {
-    const from = o.from ?? posted.length;
-    const timer = setTimeout(() => reject(new Error(`Timeout esperando '${type}' (llegaron: ${posted.slice(from).map(m => m.type).join(', ') || 'nada'})`)), o.timeout ?? 10000);
-    const check = () => {
-      const m = posted.slice(from).find(x => x.type === type && (!o.pred || o.pred(x)));
-      if (m) { clearTimeout(timer); resolve(m); } else { waiters.push(check); }
-    };
-    check();
-  });
-
   const panel: Panel = {
-    provider, posted,
-    send: async m => onMessage?.(m),
-    waitFor,
-    since: (type, from) => posted.slice(from).filter(m => m.type === type),
+    provider, posted: fake.posted, send: fake.send, waitFor: fake.waitFor, since: fake.since,
     repos: () => provider.repos,
     dispose() {
       clearTimeout(provider.refreshTimer); clearTimeout(provider.changesTimer);
       provider.dispose();
     },
   };
-
   if (opts.wait !== false) {
     // 'ready' arranca refresh(): llegan el log, los cambios y los stashes
-    const first = waitFor('data'), changes = waitFor('changes'), stashes = waitFor('stashes');
+    const first = fake.waitFor('data'), changes = fake.waitFor('changes'), stashes = fake.waitFor('stashes');
     await panel.send({ type: 'ready' });
     await Promise.all([first, changes, stashes]);
   }

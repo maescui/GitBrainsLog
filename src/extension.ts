@@ -12,7 +12,7 @@ import { DialogWindow } from './dialog';
 import { fontAttrs, fontSettings } from './fonts';
 import {
   scanDepth, commitsPerPage, mergeArgs, autoBranchColor, DEFAULT_FOLDER_COLORS, validateSetting, mergeLogs,
-  samePath, pathInside, safeRepoPath, SerialQueue, Generation, watchSpecs,
+  samePath, pathInside, safeRepoPath, SerialQueue, Generation, watchSpecs, nonce as newNonce, escAttr,
 } from './core';
 
 const SCHEME = 'jbgit';
@@ -26,7 +26,14 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.workspace.registerTextDocumentContentProvider(SCHEME, new GitContentProvider()),
     vscode.commands.registerCommand('jbGit.refresh', () => provider.init()),
-    vscode.commands.registerCommand('jbGit.focus', () => vscode.commands.executeCommand('jbGit.log.focus')),
+    vscode.window.registerWebviewPanelSerializer(GitLogViewProvider.editorType, {
+      deserializeWebviewPanel: async panel => provider.adoptEditor(panel),
+    }),
+    vscode.window.tabGroups.onDidChangeTabs(e => provider.onTabsChanged(e)),
+    vscode.commands.registerCommand('jbGit.focus', () => provider.reveal()),
+    vscode.commands.registerCommand('jbGit.openInEditor', () => provider.openInEditor()),
+    vscode.commands.registerCommand('jbGit.openInNewWindow', () => provider.openInEditor(true)),
+    vscode.commands.registerCommand('jbGit.moveToPanel', () => provider.moveToPanel()),
     vscode.commands.registerCommand('jbGit.showHistory', (uri?: vscode.Uri) => provider.showHistoryForUri(uri)),
     vscode.commands.registerCommand('jbGit.openFile', (uri: vscode.Uri) => openWorkingCopy(uri)),
     vscode.workspace.onDidChangeWorkspaceFolders(() => provider.init()),
@@ -49,12 +56,25 @@ function revisionUri(root: string, ref: string, relPath: string): vscode.Uri {
   return vscode.Uri.from({ scheme: SCHEME, path: '/' + relPath, query: JSON.stringify({ ref, root }) });
 }
 
+/** Lo contrario de revisionUri; undefined si la uri no tiene ese formato. */
+function parseRevisionUri(uri: vscode.Uri): { root: string; ref: string; rel: string } | undefined {
+  try {
+    const { ref, root } = JSON.parse(uri.query) as { ref: string; root: string };
+    return { root, ref, rel: uri.path.replace(/^\//, '') };
+  } catch {
+    return undefined;
+  }
+}
+
 /** Abre el archivo del árbol de trabajo (rel dentro de root); avisa si ya no existe. */
-async function showWorkingFile(root: string, rel: string) {
+async function showWorkingFile(root: string, rel: string, viewColumn = vscode.ViewColumn.Active) {
   const abs = safeRepoPath(root, rel);
   if (!abs) { return; }
   try {
-    await vscode.window.showTextDocument(vscode.Uri.file(abs), { preview: true });
+    // Al lado del Log, sin quitarle el foco: si no, el grupo nuevo pasaría a ser el activo y cada
+    // archivo de una selección múltiple abriría otro grupo más a la derecha
+    const preserveFocus = viewColumn === vscode.ViewColumn.Beside;
+    await vscode.window.showTextDocument(vscode.Uri.file(abs), { preview: true, viewColumn, preserveFocus });
   } catch {
     vscode.window.showWarningMessage(`${rel} doesn't exist in the working tree.`);
   }
@@ -62,17 +82,16 @@ async function showWorkingFile(root: string, rel: string) {
 
 /** Botón «Open File» de la pestaña de diff de una revisión (uri: el lado derecho, jbgit:). */
 function openWorkingCopy(uri: vscode.Uri) {
-  try {
-    return showWorkingFile((JSON.parse(uri.query) as { root: string }).root, uri.path.replace(/^\//, ''));
-  } catch { /* uri sin el formato de revisionUri */ }
+  const r = parseRevisionUri(uri);
+  return r && showWorkingFile(r.root, r.rel);
 }
 
 class GitContentProvider implements vscode.TextDocumentContentProvider {
   async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
-    const { ref, root } = JSON.parse(uri.query) as { ref: string; root: string };
-    if (!ref) { return ''; }
+    const r = parseRevisionUri(uri);
+    if (!r?.ref) { return ''; }
     try {
-      return await new Git(root).run(['show', `${ref}:${uri.path.replace(/^\//, '')}`]);
+      return await new Git(r.root).run(['show', `${r.ref}:${r.rel}`]);
     } catch {
       return '';
     }
@@ -149,8 +168,23 @@ interface RepoError { repo: Repo; message: string }
 
 export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   static readonly viewType = 'jbGit.log';
+  /** Pestaña del editor con el Log (se puede llevar a otra ventana con «Move into New Window»). */
+  static readonly editorType = 'jbGit.logEditor';
 
-  private view?: vscode.WebviewView;
+  /** Vista del panel inferior. Mientras el Log está en una pestaña del editor, muestra un aviso. */
+  private sideView?: vscode.WebviewView;
+  /** La vista del panel muestra el aviso, no el Log. */
+  private sidePlaceholder = false;
+  /**
+   * Se acaba de cerrar la pestaña del Log: hasta el próximo cambio de pestañas, VS Code aún la
+   * lista en tabGroups y no se debe tomar por una restaurada sin cargar.
+   */
+  private closingEditor = false;
+  private editor?: vscode.WebviewPanel;
+  /** Donde está el Log: la pestaña del editor si la hay; si no, la vista del panel (si no muestra el aviso). */
+  private get view(): vscode.WebviewView | vscode.WebviewPanel | undefined {
+    return this.editor ?? (this.sidePlaceholder ? undefined : this.sideView);
+  }
   private ready = false;
   // Confirmaciones abiertas en el panel (diálogo del webview): id → resolve
   private confirms = new Map<number, (r: any) => void>();
@@ -164,8 +198,12 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
   /** Filtro de rama: null (todas), 'HEAD', una rama común ('refs/heads/main') o «idx,idx|ref» */
   private filterRef: string | null = null;
   private logFilters: LogFilters = { ...EMPTY_FILTERS };
+  /** Número del último 'logFilter' aplicado: va en cada 'data' para que la página sepa si ya lo trae. */
+  private logFilterSeq = 0;
   private extraCommits = 0;
   private pendingWhileHidden = false;
+  /** Contexto jbGit.inEditor de los menús, tal como se mandó por última vez. */
+  private inEditorContext?: boolean;
 
   constructor(private readonly context: vscode.ExtensionContext) {
     this.init();
@@ -178,21 +216,166 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
   // ----- ciclo de vida ----------------------------------------------------
 
   resolveWebviewView(view: vscode.WebviewView) {
-    this.view = view;
-    this.ready = false;
-    const media = vscode.Uri.joinPath(this.context.extensionUri, 'media');
+    this.sideView = view;
+    const media = this.media();
     view.webview.options = { enableScripts: true, localResourceRoots: [media] };
-    view.webview.html = this.getHtml(view.webview, media);
+    this.showSide();
     this.updateDescription();
-    view.webview.onDidReceiveMessage(m => this.onMessage(m));
-    view.onDidChangeVisibility(() => {
-      if (view.visible && this.pendingWhileHidden) { this.refresh(); }
-    });
+    view.webview.onDidReceiveMessage(m => this.route(view.webview, m));
+    view.onDidChangeVisibility(() => this.onShown(view));
     view.onDidDispose(() => {
-      this.view = undefined;
-      this.ready = false;
-      this.cancelConfirms();
+      if (this.sideView !== view) { return; }
+      this.sideView = undefined;
+      this.sidePlaceholder = false;
+      if (!this.view) { this.detach(); }
     });
+  }
+
+  /** El webview del Log ya no es el que había: hasta que el nuevo mande 'ready' no se le envía nada. */
+  private detach() {
+    this.ready = false;
+    this.cancelConfirms();
+  }
+
+  /** Carga la página del Log en un webview. */
+  private loadLog(webview: vscode.Webview) {
+    this.detach();
+    webview.html = this.getHtml(webview);
+  }
+
+  /** La vista del panel: el aviso si el Log está en una pestaña del editor; si no, el Log. */
+  private showSide() {
+    if (!this.sideView) { return; }
+    const placeholder = !!this.editor || !!this.restoredTab();
+    if (placeholder && this.sidePlaceholder) { return; }   // ya lo muestra: sin recargarlo
+    this.sidePlaceholder = placeholder;
+    if (placeholder) { this.showPlaceholder(this.sideView.webview); } else { this.loadLog(this.sideView.webview); }
+  }
+
+  /**
+   * El Log está en una pestaña del editor: la cargada, o una restaurada sin cargar todavía si el
+   * Log no está cargado en el panel (el Log está donde esté cargado; la restaurada, solo si no).
+   */
+  private inEditor(): boolean {
+    return !!this.editor || (!this.view && !!this.restoredTab());
+  }
+
+  /**
+   * Pestaña del Log que VS Code ha restaurado al recargar la ventana pero aún no ha cargado: lo
+   * hace al mostrarla por primera vez (deserializeWebviewPanel → adoptEditor), no antes.
+   */
+  private restoredTab(): vscode.Tab | undefined {
+    if (this.editor || this.closingEditor) { return undefined; }
+    return vscode.window.tabGroups.all.flatMap(g => g.tabs).find(GitLogViewProvider.isLogTab);
+  }
+
+  private static isLogTab(t: vscode.Tab): boolean {
+    return t.input instanceof vscode.TabInputWebview && t.input.viewType.endsWith(GitLogViewProvider.editorType);
+  }
+
+  /**
+   * Cambian las pestañas (sin evento: comprobarlo todo). Solo importan las que se abren o se cierran
+   * del Log: si se cierra la restaurada sin llegar a cargarla, el Log vuelve al panel.
+   */
+  onTabsChanged(e?: vscode.TabChangeEvent) {
+    if (e && ![...e.opened, ...e.closed].some(GitLogViewProvider.isLogTab)) { return; }
+    this.closingEditor = false;
+    if (this.sidePlaceholder && !this.inEditor()) { this.showSide(); }
+    this.updateDescription();
+  }
+
+  /**
+   * Crea la pestaña del Log. Si hay una restaurada sin cargar, en su grupo y en su lugar (no hay
+   * forma de pedirle a VS Code que la cargue).
+   */
+  private createEditor(preserveFocus = false) {
+    const old = this.restoredTab();
+    // Las demás opciones del webview las pone adoptEditor (también hacen falta al restaurarla)
+    this.adoptEditor(vscode.window.createWebviewPanel(GitLogViewProvider.editorType, 'Git Log',
+      { viewColumn: old?.group.viewColumn ?? vscode.ViewColumn.Active, preserveFocus }, { retainContextWhenHidden: true }));
+    if (old) { void vscode.window.tabGroups.close(old); }
+  }
+
+  /** Al volver a verse el Log, lo que se dejó de refrescar mientras estaba oculto. */
+  private onShown(host: vscode.WebviewView | vscode.WebviewPanel) {
+    if (host.visible && this.pendingWhileHidden && this.view === host) { this.refresh(); }
+  }
+
+  /** Comandos que puede pedir el aviso del panel inferior (media/placeholder.js). */
+  private static readonly PLACEHOLDER_COMMANDS = new Set(['jbGit.focus', 'jbGit.moveToPanel']);
+
+  /** Mensajes de un webview: los del que tiene el Log van a onMessage; los del aviso del panel son comandos. */
+  private route(webview: vscode.Webview, m: any) {
+    if (this.view?.webview === webview) { return this.onMessage(m); }
+    if (m?.type === 'command' && GitLogViewProvider.PLACEHOLDER_COMMANDS.has(m.id)) {
+      return vscode.commands.executeCommand(m.id);
+    }
+  }
+
+  /** Abre el Log en una pestaña del editor (o la muestra si ya está) y, si se pide, la lleva a una ventana nueva. */
+  async openInEditor(newWindow = false) {
+    if (this.editor) { this.editor.reveal(undefined, false); } else { this.createEditor(); }
+    if (newWindow) {
+      try { await vscode.commands.executeCommand('workbench.action.moveEditorToNewWindow'); }
+      catch { vscode.window.showWarningMessage('This version of VS Code cannot move editors into a new window.'); }
+    }
+  }
+
+  /** Toma una pestaña del editor (nueva, o restaurada al recargar la ventana) como sitio del Log. */
+  adoptEditor(panel: vscode.WebviewPanel) {
+    if (this.editor && this.editor !== panel) { panel.dispose(); this.editor.reveal(); return; }
+    this.editor = panel;
+    const media = this.media();
+    panel.iconPath = vscode.Uri.joinPath(media, 'icon.svg');
+    panel.webview.options = { enableScripts: true, localResourceRoots: [media] };
+    this.loadLog(panel.webview);
+    panel.webview.onDidReceiveMessage(m => this.route(panel.webview, m));
+    panel.onDidChangeViewState(() => this.onShown(panel));
+    panel.onDidDispose(() => {
+      if (this.editor !== panel) { return; }
+      this.editor = undefined;
+      this.closingEditor = true;
+      // El Log vuelve al panel inferior
+      this.detach();
+      this.showSide();
+      this.updateDescription();
+    });
+    this.showSide();
+    this.updateDescription();
+  }
+
+  /** Cierra la pestaña del editor y devuelve el Log al panel inferior. */
+  async moveToPanel() {
+    if (this.editor) { this.editor.dispose(); }
+    else {
+      // Restaurada sin cargar: se cierra la pestaña y el Log vuelve al panel
+      const restored = this.restoredTab();
+      if (restored) { await vscode.window.tabGroups.close(restored); this.onTabsChanged(); }
+    }
+    await vscode.commands.executeCommand('jbGit.log.focus');
+  }
+
+  /**
+   * Grupo del editor para lo que se abre desde el Log (diffs, archivos, Compare, History, merge):
+   * si el Log es la pestaña activa (la acción sale de él), el de al lado, para no taparlo. Si no
+   * (p. ej. Show History desde el explorador), el activo, que no es el del Log.
+   */
+  private column(): vscode.ViewColumn {
+    return this.editor?.active ? vscode.ViewColumn.Beside : vscode.ViewColumn.Active;
+  }
+
+  /** Opciones de un diff abierto desde el Log: en vista previa, sin quitarle el foco y sin taparlo. */
+  private diffOpts(viewColumn = this.column()): vscode.TextDocumentShowOptions {
+    return { preview: true, preserveFocus: true, viewColumn };
+  }
+
+  /** Muestra el Log donde esté (pestaña del editor o panel inferior). */
+  async reveal(preserveFocus = false) {
+    if (this.editor) { this.editor.reveal(undefined, preserveFocus); return; }
+    // Restaurada sin cargar (y el Log no está cargado en el panel): se recrea
+    if (this.inEditor()) { this.createEditor(preserveFocus); return; }
+    if (this.sideView) { this.sideView.show(preserveFocus); return; }
+    await vscode.commands.executeCommand('jbGit.log.focus');
   }
 
   /** Busca los repositorios del workspace (la carpeta abierta puede contener varios). */
@@ -241,11 +424,17 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
     return p;
   }
 
-  /** Título del panel: el repositorio, o cuántos hay. */
+  /** Título del panel y de la pestaña (el repositorio, o cuántos hay) y contexto jbGit.inEditor de los menús. */
   private updateDescription() {
-    if (!this.view) { return; }
-    this.view.description = this.repos.length === 1 ? this.repos[0].name
+    const inEditor = this.inEditor();
+    if (this.inEditorContext !== inEditor) {
+      this.inEditorContext = inEditor;
+      void vscode.commands.executeCommand('setContext', 'jbGit.inEditor', this.inEditorContext);
+    }
+    const desc = this.repos.length === 1 ? this.repos[0].name
       : this.repos.length > 1 ? `${this.repos.length} repositories` : undefined;
+    if (this.sideView) { this.sideView.description = inEditor ? 'Opened in editor' : desc; }
+    if (this.editor) { this.editor.title = desc ? `Git Log (${desc})` : 'Git Log'; }
   }
 
   private repo(idx: any): Repo | undefined {
@@ -373,6 +562,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
         })),
         filterRef: this.filterRef,
         logFilters: this.logFilters,
+        logFilterSeq: this.logFilterSeq,
         firstParent: this.firstParent(),
         longEdges: this.longEdges(),
         hasMore,
@@ -588,7 +778,8 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
   /**
    * Confirmación en un diálogo dentro del panel Git (media/main.js, showConfirm), del tamaño de
    * su contenido; la ventana flotante de VS Code no deja fijar su tamaño y para un aviso corto
-   * salía enorme. Resuelve con { ok, checked }, o undefined si el panel se cierra o se recarga.
+   * salía enorme. Resuelve con { ok, checked }: ok false también si el Log se cierra, se recarga o
+   * cambia de sitio con el diálogo abierto. undefined solo si el panel no se pudo abrir.
    */
   private async confirmInPanel(data: Record<string, unknown>): Promise<{ ok: boolean; checked: boolean } | undefined> {
     return this.dialogInPanel('confirm', data);
@@ -596,15 +787,16 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
   /**
    * Diálogo propio del webview sobre el panel Git (confirm, mergeDialog). Resuelve con lo que
-   * responda la página (confirmResult / dialogResult), o undefined si el panel se cierra o se recarga.
+   * responda la página (confirmResult / dialogResult), con { ok: false } si el Log se cierra, se
+   * recarga o cambia de sitio antes (cancelConfirms), o undefined si el panel no se pudo abrir.
    */
   private async dialogInPanel(type: string, data: Record<string, unknown>): Promise<any> {
     if (!this.view || !this.ready) {
-      await vscode.commands.executeCommand('jbGit.log.focus');
+      await this.reveal();
       for (let i = 0; i < 50 && !(this.view && this.ready); i++) { await new Promise(r => setTimeout(r, 100)); }
       if (!this.view || !this.ready) { return undefined; }
     }
-    this.view.show?.(true);
+    await this.reveal(true);
     const id = ++this.confirmSeq;
     return new Promise(resolve => {
       this.confirms.set(id, resolve);
@@ -612,8 +804,9 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
     });
   }
 
+  /** Los diálogos abiertos se dan por cancelados (no se vuelven a preguntar en otro sitio). */
   private cancelConfirms() {
-    for (const r of this.confirms.values()) { r(undefined); }
+    for (const r of this.confirms.values()) { r({ ok: false, checked: false }); }
     this.confirms.clear();
   }
 
@@ -634,6 +827,9 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
       case 'dialogResult':
         this.confirms.get(Number(m.id))?.(m);
         this.confirms.delete(Number(m.id));
+        return;
+      case 'uiState':
+        if (m.state && typeof m.state === 'object') { return this.context.workspaceState.update(GitLogViewProvider.UI_STATE_KEY, m.state); }
         return;
       case 'ready':
         this.cancelConfirms();
@@ -667,7 +863,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
         }
         return;
       case 'logFilter':
-        return this.guard(() => this.setLogFilter(m.key, m.value));
+        return this.guard(() => this.setLogFilter(m.key, m.value, m.seq));
       case 'pickLogFilter':
         return this.guard(() => this.pickLogFilter(m.key));
       case 'loadMore':
@@ -772,7 +968,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
   // ----- diffs ----------------------------------------------------------------
 
-  /** viewColumn: desde la ventana flotante de Push, el diff se abre en la ventana principal (ViewColumn.One). */
+  /** viewColumn: el grupo donde abrirlo (desde la ventana flotante de Push, uno de la ventana principal); por defecto, column(). */
   private async openCommitFileDiff(id: string, parentId: string | null, f: FileChange, viewColumn?: vscode.ViewColumn) {
     const d = this.decode(id);
     if (!d) { return; }
@@ -781,11 +977,11 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
     const left = f.status === 'A' || !parent ? revisionUri(root, '', f.path) : revisionUri(root, parent, f.oldPath ?? f.path);
     const right = f.status === 'D' ? revisionUri(root, '', f.path) : revisionUri(root, hash, f.path);
     const title = `${path.basename(f.path)} (${parent ? parent.slice(0, 8) : 'empty'} ↔ ${hash.slice(0, 8)})`;
-    await vscode.commands.executeCommand('vscode.diff', left, right, title, { preview: true, preserveFocus: true, ...(viewColumn ? { viewColumn } : {}) });
+    await vscode.commands.executeCommand('vscode.diff', left, right, title, this.diffOpts(viewColumn));
   }
 
   private openWorkingFile(repo: Repo, rel: string) {
-    return showWorkingFile(repo.root, rel);
+    return showWorkingFile(repo.root, rel, this.column());
   }
 
   /**
@@ -796,8 +992,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
   private async pickAndDiff(repo: Repo, left: string, right: string | undefined, title: string) {
     const git = repo.git;
     if (this.repos.length > 1) { title = `${repo.name}: ${title}`; }
-    const media = vscode.Uri.joinPath(this.context.extensionUri, 'media');
-    ComparePanel.open(media, git, left, right, title, this.nativeDiff(git, title));
+    ComparePanel.open(this.media(), git, left, right, title, this.nativeDiff(git, title), this.column());
   }
 
   /** Diff nativo de VS Code de un archivo entre dos revisiones (right undefined = árbol de trabajo). */
@@ -822,8 +1017,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
   showHistory(repo: Repo, rel: string, folder: boolean, rev?: string) {
     const name = rel ? path.basename(rel) : repo.name;
     const title = `History: ${name}${this.repos.length > 1 && rel ? ` (${repo.name})` : ''}`;
-    const media = vscode.Uri.joinPath(this.context.extensionUri, 'media');
-    ComparePanel.openHistory(media, repo.git, { path: rel || '.', folder, rev }, title, this.nativeDiff(repo.git, title));
+    ComparePanel.openHistory(this.media(), repo.git, { path: rel || '.', folder, rev }, title, this.nativeDiff(repo.git, title), this.column());
   }
 
   /** Show History desde el explorador o el editor: busca el repo más profundo que contiene la ruta. */
@@ -893,8 +1087,8 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
       branches: list.map(n => ({ key: n.key, name: n.name, type: n.type, fav: fav(n), repoNames: n.repoNames })),
       preselect,
     });
-    // undefined: el panel no se pudo abrir (entonces, el selector nativo) o se recargó o cerró
-    // con la ventana abierta (entonces no se hace nada, como al cancelar)
+    // undefined: el panel no se pudo abrir (entonces, el selector nativo). Si se recargó, se cerró o
+    // cambió de sitio con la ventana abierta, llega { ok: false }: no se hace nada, como al cancelar
     if (res === undefined) { return this.view ? undefined : this.pickMergeNative(preselect); }
     if (!res.ok) { return; }
     const n = nodes.find(x => x.key === res.key);
@@ -1604,7 +1798,9 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
           const files = await c.repo.git.getChangedFiles(this.decode(m.parent)?.hash ?? null, c.hash);
           post({ type: 'pushFiles', hash: m.hash, files });
         } else if (m?.type === 'openFileDiff') {
-          await this.openCommitFileDiff(m.hash, m.parent ?? null, m.file as FileChange, vscode.ViewColumn.One);
+          // En la ventana principal; si el Log es una pestaña del primer grupo, en el segundo para no taparlo
+          const col = this.editor?.viewColumn === vscode.ViewColumn.One ? vscode.ViewColumn.Two : vscode.ViewColumn.One;
+          await this.openCommitFileDiff(m.hash, m.parent ?? null, m.file as FileChange, col);
         }
       },
     });
@@ -1659,7 +1855,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
   // ----- filtros del log (Paths, User, Date) ------------------------------------------
 
-  private async setLogFilter(key: string, value: any) {
+  private async setLogFilter(key: string, value: any, seq?: unknown) {
     const f = { ...this.logFilters };
     if (key === 'authors') {
       f.authors = Array.isArray(value) ? value.filter((a: any) => typeof a === 'string' && a.trim()).map((a: string) => a.trim()) : [];
@@ -1679,6 +1875,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
       return;
     }
     this.logFilters = f;
+    if (Number.isSafeInteger(seq)) { this.logFilterSeq = seq as number; }
     this.extraCommits = 0;
     return this.refresh();
   }
@@ -1742,7 +1939,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
     const name = path.basename(c.path);
     const empty = revisionUri(root, '', c.path);
     const work = vscode.Uri.file(path.join(root, c.path));
-    const opts = { preview: true, preserveFocus: true };
+    const opts = this.diffOpts();
     switch (c.group) {
       case 'staged': {
         // HEAD ↔ índice (':0' es la versión en el índice: git show :0:ruta)
@@ -1790,10 +1987,9 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
       if (r) { await accept(r === a ? 'acceptOurs' : 'acceptTheirs'); }
       return;
     }
-    const media = vscode.Uri.joinPath(this.context.extensionUri, 'media');
-    await MergePanel.open(media, repo.git, rel, { base, ours: o, theirs: t }, { ours, theirs },
+    await MergePanel.open(this.media(), repo.git, rel, { base, ours: o, theirs: t }, { ours, theirs },
       () => this.scheduleChanges(),
-      () => this.openNativeMergeEditor(repo, rel, stages));
+      () => this.openNativeMergeEditor(repo, rel, stages), this.column());
   }
 
   /** El editor de merge de VS Code (alternativa al visor propio, desde su pie). */
@@ -2190,7 +2386,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
       left = f.status === 'A' ? empty : revisionUri(root, `${hash}^1`, f.oldPath ?? f.path);
       right = f.status === 'D' ? empty : revisionUri(root, hash, f.path);
     }
-    await vscode.commands.executeCommand('vscode.diff', left, right, `${path.basename(f.path)} (base ↔ stash ${hash.slice(0, 8)})`, { preview: true, preserveFocus: true });
+    await vscode.commands.executeCommand('vscode.diff', left, right, `${path.basename(f.path)} (base ↔ stash ${hash.slice(0, 8)})`, this.diffOpts());
   }
 
   private async stashAction(action: string, id: string, ref: string) {
@@ -2328,8 +2524,46 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
   }
 
   // ----- HTML ------------------------------------------------------------------------
-  private getHtml(webview: vscode.Webview, media: vscode.Uri): string {
-    const nonce = Array.from({ length: 32 }, () => Math.floor(Math.random() * 36).toString(36)).join('');
+
+  /** Aviso del panel inferior mientras el Log está en una pestaña del editor. */
+  private showPlaceholder(webview: vscode.Webview) {
+    const nonce = newNonce();
+    const media = this.media();
+    // dialog.css: variables del tema y botones .btn, como en las ventanas de diálogo
+    const common = webview.asWebviewUri(vscode.Uri.joinPath(media, 'dialog.css'));
+    const css = webview.asWebviewUri(vscode.Uri.joinPath(media, 'placeholder.css'));
+    const js = webview.asWebviewUri(vscode.Uri.joinPath(media, 'placeholder.js'));
+    webview.html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+<link rel="stylesheet" href="${common}">
+<link rel="stylesheet" href="${css}">
+</head>
+<body${fontAttrs()}>
+<div>Git Log is open in an editor tab.</div>
+<div class="row">
+  <button class="btn" data-command="jbGit.focus">Show Git Log</button>
+  <button class="btn secondary" data-command="jbGit.moveToPanel">Move Back Here</button>
+</div>
+<script nonce="${nonce}" src="${js}"></script>
+</body>
+</html>`;
+  }
+
+  /**
+   * Estado de la interfaz del Log (anchos, pestaña, borrador…) que guarda la extensión: la página
+   * lo usa si es más reciente que el suyo (newerUiState, main.js), p. ej. al pasar el Log del
+   * panel a una pestaña o al revés.
+   */
+  private static readonly UI_STATE_KEY = 'jbGit.uiState';
+
+  private getHtml(webview: vscode.Webview): string {
+    const media = this.media();
+    const nonce = newNonce();
+    const uiState = this.context.workspaceState.get<object>(GitLogViewProvider.UI_STATE_KEY);
+    const state = uiState ? ` data-ui-state="${escAttr(JSON.stringify(uiState))}"` : '';
     const css = webview.asWebviewUri(vscode.Uri.joinPath(media, 'main.css'));
     const js = webview.asWebviewUri(vscode.Uri.joinPath(media, 'main.js'));
     return `<!DOCTYPE html>
@@ -2341,7 +2575,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
 <link rel="stylesheet" href="${css}">
 <title>Git Log</title>
 </head>
-<body${fontAttrs()}>
+<body${fontAttrs()}${state}>
 <div id="tabs" role="tablist">
   <button class="tab" role="tab" data-tab="changes">Local Changes <span class="tab-count" id="changes-count"></span></button>
   <button class="tab" role="tab" data-tab="stash">Stash <span class="tab-count" id="stash-count"></span></button>

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { fontAttrs } from './fonts';
+import { nonce as newNonce, escAttr as esc } from './core';
 
 /**
  * Ventanas de diálogo propias (Push Commits, mensaje de Squash) como una ventana flotante de
@@ -50,10 +51,9 @@ export class DialogWindow {
   }
 
   private static html(webview: vscode.Webview, media: vscode.Uri, title: string): string {
-    const nonce = Array.from({ length: 32 }, () => Math.floor(Math.random() * 36).toString(36)).join('');
+    const nonce = newNonce();
     const css = webview.asWebviewUri(vscode.Uri.joinPath(media, 'dialog.css'));
     const js = webview.asWebviewUri(vscode.Uri.joinPath(media, 'dialog.js'));
-    const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
     return `<!DOCTYPE html>
 <html lang="en">
 <head>

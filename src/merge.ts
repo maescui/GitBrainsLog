@@ -4,6 +4,7 @@ import * as os from 'os';
 import { promises as fs } from 'fs';
 import { Git } from './git';
 import { fontAttrs } from './fonts';
+import { nonce as newNonce } from './core';
 
 /**
  * Visor de conflictos de tres columnas, como el «Merge Revisions» de JetBrains: a la
@@ -91,7 +92,8 @@ export class MergePanel {
    * :3 theirs). labels: nombres de cada lado (la rama de cada uno).
    */
   static async open(media: vscode.Uri, git: Git, rel: string, versions: { base: string; ours: string; theirs: string },
-    labels: { ours: string; theirs: string }, onDone: () => void, openNative: () => Thenable<unknown>) {
+    labels: { ours: string; theirs: string }, onDone: () => void, openNative: () => Thenable<unknown>,
+    column: vscode.ViewColumn) {
     const k = path.join(git.root, rel);
     const prev = open.get(k);
     if (prev) { prev.panel.reveal(); return; }
@@ -122,7 +124,7 @@ export class MergePanel {
       fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
     }
 
-    const panel = vscode.window.createWebviewPanel('jbGit.merge', `Merge: ${path.basename(rel)}`, vscode.ViewColumn.Active, {
+    const panel = vscode.window.createWebviewPanel('jbGit.merge', `Merge: ${path.basename(rel)}`, column, {
       enableScripts: true,
       retainContextWhenHidden: true,
       localResourceRoots: [media],
@@ -175,7 +177,7 @@ export class MergePanel {
 
   private html(media: vscode.Uri): string {
     const webview = this.panel.webview;
-    const nonce = Array.from({ length: 32 }, () => Math.floor(Math.random() * 36).toString(36)).join('');
+    const nonce = newNonce();
     const css = webview.asWebviewUri(vscode.Uri.joinPath(media, 'merge.css'));
     const js = webview.asWebviewUri(vscode.Uri.joinPath(media, 'merge.js'));
     return `<!DOCTYPE html>
