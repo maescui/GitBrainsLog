@@ -210,6 +210,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
   }
 
   dispose() {
+    this.flushUiState();
     this.repos.forEach(r => r.dispose());
   }
 
@@ -829,7 +830,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
         this.confirms.delete(Number(m.id));
         return;
       case 'uiState':
-        if (m.state && typeof m.state === 'object') { return this.context.workspaceState.update(GitLogViewProvider.UI_STATE_KEY, m.state); }
+        if (m.state && typeof m.state === 'object') { this.saveUiState(m.state); }
         return;
       case 'ready':
         this.cancelConfirms();
@@ -2558,11 +2559,37 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
    * panel a una pestaña o al revés.
    */
   private static readonly UI_STATE_KEY = 'jbGit.uiState';
+  /** Lo último que mandó la página y aún no está en workspaceState (se escribe tras una pausa). */
+  private pendingUiState?: object;
+  private uiStateTimer?: NodeJS.Timeout;
+
+  /**
+   * La página manda su estado en cada cambio, también en cada tecla del borrador del commit. Aquí
+   * se guarda en memoria al momento (lo usa getHtml si el Log cambia de sitio) y solo se escribe en
+   * workspaceState cuando se deja de escribir, para no hacer una escritura por pulsación.
+   */
+  private saveUiState(state: object) {
+    this.pendingUiState = state;
+    clearTimeout(this.uiStateTimer);
+    this.uiStateTimer = setTimeout(() => this.flushUiState(), 300);
+  }
+
+  private flushUiState() {
+    clearTimeout(this.uiStateTimer);
+    const state = this.pendingUiState;
+    this.pendingUiState = undefined;
+    if (state) { void this.context.workspaceState.update(GitLogViewProvider.UI_STATE_KEY, state); }
+  }
+
+  /** El estado más reciente: el pendiente de escribir, o el ya guardado. */
+  private currentUiState(): object | undefined {
+    return this.pendingUiState ?? this.context.workspaceState.get<object>(GitLogViewProvider.UI_STATE_KEY);
+  }
 
   private getHtml(webview: vscode.Webview): string {
     const media = this.media();
     const nonce = newNonce();
-    const uiState = this.context.workspaceState.get<object>(GitLogViewProvider.UI_STATE_KEY);
+    const uiState = this.currentUiState();
     const state = uiState ? ` data-ui-state="${escAttr(JSON.stringify(uiState))}"` : '';
     const css = webview.asWebviewUri(vscode.Uri.joinPath(media, 'main.css'));
     const js = webview.asWebviewUri(vscode.Uri.joinPath(media, 'main.js'));

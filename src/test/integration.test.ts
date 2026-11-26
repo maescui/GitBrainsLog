@@ -393,6 +393,37 @@ describe('Log en una pestaña del editor', () => {
     assert.ok(has(side.webview.html, { tab: 'log' }));
   });
 
+  test('el estado de la interfaz se escribe una vez por ráfaga (no una por tecla) y no se pierde al cerrar', async () => {
+    const r = newRepo();
+    const p = await open(r.root);
+    const ws = p.provider.context.workspaceState;
+    const writes: object[] = [];
+    const update = ws.update.bind(ws);
+    ws.update = (key: string, value: object) => { if (key === 'jbGit.uiState') { writes.push(value); } return update(key, value); };
+    const has = (html: string, state: object) => html.includes(`data-ui-state="${escAttr(JSON.stringify(state))}"`);
+
+    // El borrador del commit llega en cada tecla: nada se escribe mientras se sigue escribiendo…
+    for (const draft of ['f', 'fi', 'fix', 'fix ', 'fix b']) { await p.send({ type: 'uiState', state: { commitDraft: draft } }); }
+    assert.equal(writes.length, 0);
+    // …pero una página que se cargue ahora (el Log cambia de sitio) ya lleva lo último
+    const ed = fakeEditor();
+    p.provider.adoptEditor(ed.panel);
+    assert.ok(has(ed.panel.webview.html, { commitDraft: 'fix b' }));
+    // Pasada la pausa, una sola escritura con el último estado
+    await until(() => writes.length === 1, 'que se escriba el estado', 3000);
+    assert.deepEqual(writes, [{ commitDraft: 'fix b' }]);
+    await sleep(450);
+    assert.equal(writes.length, 1, 'no se vuelve a escribir sin cambios');
+
+    // Si se cierra antes de la pausa (p. ej. se desactiva la extensión), se escribe al cerrar
+    await ed.send({ type: 'uiState', state: { commitDraft: 'fix bug' } });   // el Log está ya en la pestaña
+    assert.equal(writes.length, 1);
+    p.provider.dispose();
+    assert.deepEqual(writes[1], { commitDraft: 'fix bug' });
+    await sleep(450);
+    assert.equal(writes.length, 2, 'y no se escribe otra vez después');
+  });
+
   test('con el Log en una pestaña a la vista, los diffs se abren en el grupo de al lado', async () => {
     const r = newRepo();
     const p = await open(r.root);
