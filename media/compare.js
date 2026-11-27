@@ -4,6 +4,8 @@
 (function () {
   // @ts-ignore
   const vscode = acquireVsCodeApi();
+  // Iconos de archivos del tema de iconos de VS Code (fileicons.js); sin tema, la lista queda sin iconos
+  const jbFileIcons = /** @type {any} */ (window).jbFileIcons || { html: () => '', apply() { /* nada */ }, setTheme() { /* nada */ } };
   // Fuentes de Settings ▸ Fonts (atributos data-* del <body>; sin ellos, las de VS Code)
   (() => {
     const d = document.body.dataset, r = document.documentElement.style;
@@ -37,6 +39,7 @@
 
   /** @type {{status: string, path: string, oldPath?: string}[]} */
   let files = [];
+  let loaded = false;   // ya ha llegado la lista de archivos (antes, «No differences» sería un parpadeo)
   let selected = -1;
   let filter = '';
   /** Filas del visor: { k: ''|'add'|'del'|'mod', l, r (números), lt, rt (texto) } */
@@ -65,8 +68,10 @@
     listEl.innerHTML = vis.map(({ f, i }) =>
       `<div class="fi${i === selected ? ' selected' : ''}" data-i="${i}" role="option" title="${esc(f.oldPath ? `${f.oldPath} → ${f.path}` : f.path)}">` +
       `<span class="st st-${esc(f.status[0])}">${esc(f.status[0])}</span>` +
+      jbFileIcons.html(f.path, false) +
       `<span class="fname">${esc(base(f.path))}</span>` +
       `<span class="fdir">${esc([dir(f.path), f.oldPath ? `← ${f.oldPath}` : ''].filter(Boolean).join('  '))}</span></div>`).join('');
+    jbFileIcons.apply(listEl);
   }
 
   function select(i) {
@@ -383,11 +388,13 @@
   window.addEventListener('message', ev => {
     const m = ev.data;
     if (m.type === 'history') { onHistory(m); return; }
+    if (m.type === 'iconTheme') { jbFileIcons.setTheme(m.theme); if (loaded) { renderList(); } return; }
     if (m.type === 'init') {
       // En el historial, solo vale la respuesta del commit elegido
       if (historyMode && m.commit !== commitSel) { return; }
       const keep = selected >= 0 && files[selected] ? files[selected].path : null;
       files = m.files || [];
+      loaded = true;
       $('#cmp-title').textContent = `${files.length} file${files.length === 1 ? '' : 's'}`;
       $('#cmp-title').setAttribute('title', m.title);
       $('#cmp-left-name').textContent = m.left;

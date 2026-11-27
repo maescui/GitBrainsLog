@@ -10,6 +10,7 @@ import { ComparePanel } from './compare';
 import { MergePanel } from './merge';
 import { DialogWindow } from './dialog';
 import { fontAttrs, fontSettings } from './fonts';
+import { FileIconsFeed, watchFileIcons } from './fileIcons';
 import {
   scanDepth, commitsPerPage, mergeArgs, autoBranchColor, DEFAULT_FOLDER_COLORS, validateSetting, mergeLogs,
   samePath, pathInside, safeRepoPath, nestedRepos, pickMainRef, SerialQueue, Generation, watchSpecs, nonce as newNonce, escAttr,
@@ -37,6 +38,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('jbGit.showHistory', (uri?: vscode.Uri) => provider.showHistoryForUri(uri)),
     vscode.commands.registerCommand('jbGit.openFile', (uri: vscode.Uri) => openWorkingCopy(uri)),
     vscode.workspace.onDidChangeWorkspaceFolders(() => provider.init()),
+    watchFileIcons(),
     vscode.workspace.onDidChangeConfiguration(e => {
       if (e.affectsConfiguration('jbGit')) { provider.postSettings(); }
       if (e.affectsConfiguration('jbGit.repositoryScanMaxDepth')) { provider.init(); }
@@ -218,6 +220,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
   dispose() {
     this.flushUiState();
+    this.icons.dispose();
     clearTimeout(this.initTimer);
     this.repos.forEach(r => r.dispose());
   }
@@ -504,6 +507,8 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
 
   /** Búsquedas del log en marcha: solo la última manda (las demás se descartan al terminar). */
   private readonly searchGen = new Generation();
+  /** Los iconos de archivos del tema de iconos de VS Code: se mandan al arrancar la página y cuando cambian. */
+  private readonly icons = new FileIconsFeed(msg => this.post(msg));
   /** Como mucho, tantos resultados de una búsqueda (la lista es virtual: 5000 filas no pesan). */
   private static readonly SEARCH_MAX = 5000;
 
@@ -916,6 +921,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
         this.cancelConfirms();
         this.ready = true;
         this.postSettings();
+        this.icons.sendNow();
         if (this.repos.length) { this.refresh(); } else { this.init(); }
         return;
       case 'refresh':
@@ -2713,11 +2719,12 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
     const state = uiState ? ` data-ui-state="${escAttr(JSON.stringify(uiState))}"` : '';
     const css = webview.asWebviewUri(vscode.Uri.joinPath(media, 'main.css'));
     const js = webview.asWebviewUri(vscode.Uri.joinPath(media, 'main.js'));
+    const icons = webview.asWebviewUri(vscode.Uri.joinPath(media, 'fileicons.js'));
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; img-src ${webview.cspSource} data:; script-src 'nonce-${nonce}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; img-src ${webview.cspSource} data:; font-src data:; script-src 'nonce-${nonce}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="${css}">
 <title>Git Log</title>
@@ -2802,6 +2809,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
   </div>
 </div>
 <div id="menu-root"></div>
+<script nonce="${nonce}" src="${icons}"></script>
 <script nonce="${nonce}" src="${js}"></script>
 </body>
 </html>`;

@@ -30,10 +30,22 @@ export const stubState = {
   /** Grupos de pestañas del editor (window.tabGroups.all) y las pestañas que se han cerrado. */
   tabGroups: [] as { viewColumn: number; tabs: any[] }[],
   closedTabs: [] as unknown[],
+  /** Extensiones instaladas (vscode.extensions.all): { packageJSON, extensionPath }. */
+  extensions: [] as { packageJSON: any; extensionPath: string }[],
+  /** Tema de color de VS Code (ColorThemeKind: 1 claro, 2 oscuro, 3 alto contraste, 4 alto contraste claro). */
+  colorKind: 2,
+  configListeners: [] as ((e: { affectsConfiguration(s: string): boolean }) => void)[],
+  colorListeners: [] as (() => void)[],
+  extensionListeners: [] as (() => void)[],
   reset() {
     this.folders = []; this.watchers = []; this.errors = []; this.warnings = []; this.infos = []; this.commands = []; this.shown = [];
     this.tabGroups = []; this.closedTabs = [];
+    this.extensions = []; this.colorKind = 2; this.configListeners = []; this.colorListeners = []; this.extensionListeners = [];
   },
+  /** Simula que el usuario cambia un ajuste de VS Code (p. ej. «workbench.iconTheme»). */
+  changeConfig(section: string) { this.configListeners.forEach(l => l({ affectsConfiguration: s => section === s || section.startsWith(s + '.') })); },
+  changeColorTheme(kind: number) { this.colorKind = kind; this.colorListeners.forEach(l => l()); },
+  changeExtensions() { this.extensionListeners.forEach(l => l()); },
   /** Dispara un evento en todos los watchers vivos con esa base y ese patrón (fsPath = el archivo que cambia). */
   fire(kind: 'change' | 'create' | 'delete', where: { base: string; pattern?: string }, fsPath: string) {
     const norm = (x: string) => x.replace(/\\/g, '/').toLowerCase();
@@ -49,6 +61,12 @@ class StubRelativePattern {
 }
 
 const noop = async () => undefined;
+
+/** Registra un oyente y devuelve lo que hace falta para quitarlo (como los eventos de vscode). */
+function listen<T extends (...a: any[]) => void>(list: T[], cb: T) {
+  list.push(cb);
+  return { dispose() { const i = list.indexOf(cb); if (i >= 0) { list.splice(i, 1); } } };
+}
 
 const stub: any = {
   Uri: {
@@ -72,8 +90,22 @@ const stub: any = {
       get: <T>(key: string, def: T): T => (key in stubConfig ? stubConfig[key] as T : def),
       update: async () => undefined,
     }),
+    onDidChangeConfiguration: (cb: (e: any) => void) => listen(stubState.configListeners, cb),
   },
+  extensions: {
+    get all() { return stubState.extensions; },
+    onDidChange: (cb: () => void) => listen(stubState.extensionListeners, cb),
+  },
+  EventEmitter: class {
+    private listeners: ((v: any) => void)[] = [];
+    event = (cb: (v: any) => void) => listen(this.listeners, cb);
+    fire(v?: unknown) { [...this.listeners].forEach(l => l(v)); }
+  },
+  Disposable: { from: (...ds: { dispose(): void }[]) => ({ dispose() { ds.forEach(d => d.dispose()); } }) },
+  ColorThemeKind: { Light: 1, Dark: 2, HighContrast: 3, HighContrastLight: 4 },
   window: {
+    get activeColorTheme() { return { kind: stubState.colorKind }; },
+    onDidChangeActiveColorTheme: (cb: () => void) => listen(stubState.colorListeners, cb),
     showErrorMessage: async (m: string) => { stubState.errors.push(m); },
     showWarningMessage: async (m: string) => { stubState.warnings.push(m); },
     showInformationMessage: async (m: string) => { stubState.infos.push(m); },

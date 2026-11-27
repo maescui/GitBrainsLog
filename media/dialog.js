@@ -5,6 +5,8 @@
 (function () {
   // @ts-ignore
   const vscode = acquireVsCodeApi();
+  // Iconos de archivos del tema de iconos de VS Code (fileicons.js); sin tema, la lista queda sin iconos
+  const jbFileIcons = /** @type {any} */ (window).jbFileIcons || { html: () => '', apply() { /* nada */ }, setTheme() { /* nada */ } };
   // Fuentes de Settings ▸ Fonts (atributos data-* del <body>; sin ellos, las de VS Code)
   (() => {
     const d = document.body.dataset, r = document.documentElement.style;
@@ -269,9 +271,10 @@
     const st = s => (s[0] === 'A' ? 'st-A' : s[0] === 'D' ? 'st-D' : s[0] === 'R' ? 'st-R' : 'st-M');
     /** @type {HTMLElement} */ (root.querySelector('.pd-files')).innerHTML = m.files.length
       ? m.files.map((f, i) => `<div class="pd-file" data-i="${i}" title="${esc(f.oldPath ? `${f.oldPath} → ${f.path}` : f.path)} — double-click to see the diff">` +
-        `<span class="pd-st ${st(f.status)}">${esc(f.status[0])}</span><span class="pd-fname">${esc(f.path.split('/').pop())}</span>` +
+        `<span class="pd-st ${st(f.status)}">${esc(f.status[0])}</span>${jbFileIcons.html(f.path, false)}<span class="pd-fname">${esc(f.path.split('/').pop())}</span>` +
         `<span class="pd-fdir muted">${esc(f.path.includes('/') ? f.path.slice(0, f.path.lastIndexOf('/')) : '')}</span></div>`).join('')
       : '<div class="pd-none muted">No files changed</div>';
+    jbFileIcons.apply(root.querySelector('.pd-files'));
   }
 
   window.addEventListener('message', ev => {
@@ -279,6 +282,10 @@
     if (m.type === 'init') { if (m.kind === 'push') { showPush(m); } else if (m.kind === 'text') { showText(m); } }
     else if (m.type === 'pushPreview') { onPushPreview(m); }
     else if (m.type === 'pushFiles') { onPushFiles(m); }
+    else if (m.type === 'iconTheme') {
+      jbFileIcons.setTheme(m.theme);
+      if (push && push.sel && push.files) { onPushFiles({ hash: push.sel.hash, files: push.files }); }   // repinta con los iconos
+    }
   });
   vscode.postMessage({ type: 'ready' });
 })();

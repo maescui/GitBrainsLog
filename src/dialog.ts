@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { fontAttrs } from './fonts';
 import { nonce as newNonce, escAttr as esc } from './core';
+import { FileIconsFeed } from './fileIcons';
 
 /**
  * Ventanas de diálogo propias (Push Commits, mensaje de Squash) como una ventana flotante de
@@ -36,12 +37,14 @@ export class DialogWindow {
         resolve(v);
       };
       const post = (msg: unknown) => { panel.webview.postMessage(msg); };
+      // Los iconos de archivos del tema de iconos de VS Code: al arrancar la página y cuando cambian
+      const icons = new FileIconsFeed(post);
       panel.webview.onDidReceiveMessage(async m => {
-        if (m?.type === 'ready') { post({ type: 'init', kind: opts.kind, title: opts.title, ...opts.data }); return; }
+        if (m?.type === 'ready') { post({ type: 'init', kind: opts.kind, title: opts.title, ...opts.data }); icons.sendNow(); return; }
         if (m?.type === 'result') { finish(m); panel.dispose(); return; }
         try { await opts.onMessage?.(m, post); } catch (e: any) { vscode.window.showErrorMessage(e.message); }
       });
-      panel.onDidDispose(() => finish(undefined));
+      panel.onDidDispose(() => { icons.dispose(); finish(undefined); });
       panel.webview.html = DialogWindow.html(panel.webview, media, opts.title);
       // A una ventana flotante (solo en el escritorio; si falla, se queda como pestaña)
       if (vscode.env.uiKind === vscode.UIKind.Desktop) {
@@ -54,17 +57,19 @@ export class DialogWindow {
     const nonce = newNonce();
     const css = webview.asWebviewUri(vscode.Uri.joinPath(media, 'dialog.css'));
     const js = webview.asWebviewUri(vscode.Uri.joinPath(media, 'dialog.js'));
+    const icons = webview.asWebviewUri(vscode.Uri.joinPath(media, 'fileicons.js'));
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; img-src ${webview.cspSource} data:; script-src 'nonce-${nonce}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; img-src ${webview.cspSource} data:; font-src data:; script-src 'nonce-${nonce}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="${css}">
 <title>${esc(title)}</title>
 </head>
 <body${fontAttrs()}>
 <div id="dlg"></div>
+<script nonce="${nonce}" src="${icons}"></script>
 <script nonce="${nonce}" src="${js}"></script>
 </body>
 </html>`;

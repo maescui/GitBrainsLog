@@ -1068,3 +1068,7 @@ input[type=checkbox]:disabled { opacity: .5; cursor: default; }
 .set-pagebody[data-page="graph"] { grid-template-columns: minmax(0, 1fr); }
 .set-pagebody > .set-page-head { min-width: 0; }
 .gc-tags .gc-sub { margin-top: 16px; }
+
+/* Iconos de archivos y carpetas del tema de iconos de VS Code (media/fileicons.js): imágenes o caracteres de una fuente */
+.ficon { width: 16px; height: 16px; flex: none; display: block; }
+.ficon-g { width: 16px; text-align: center; line-height: 16px; overflow: visible; }

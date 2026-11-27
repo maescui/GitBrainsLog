@@ -2,6 +2,8 @@
 (function () {
   // eslint-disable-next-line no-undef
   const vscode = acquireVsCodeApi();
+  // Iconos de archivos del tema de iconos de VS Code (fileicons.js); sin tema, cada fila usa el suyo de siempre
+  const jbFileIcons = /** @type {any} */ (window).jbFileIcons || { html: () => '', apply() { /* nada */ }, setTheme() { /* nada */ } };
 
   // Alto de una fila del log: tamaño de letra + 11 (24 con 13 px); lo recalcula applyFonts
   let ROW_H = 24;
@@ -94,6 +96,11 @@
   const inner = document.createElement('div');
   inner.id = 'log-inner';
   listEl.appendChild(inner);
+
+  /** Icono de un archivo según el tema de iconos de VS Code, o el de siempre si no hay tema (o no tiene para él). */
+  function fileIcon(name) { return jbFileIcons.html(name, false) || ICON.file; }
+  /** Icono de una carpeta, abierta o cerrada, según el tema de iconos de VS Code, o el de siempre. */
+  function folderIcon(name, open) { return jbFileIcons.html(name, true, open) || ICON.folder; }
 
   function saveUi() {
     const state = {
@@ -192,6 +199,7 @@
       case 'changes': return onChanges(m);
       case 'changePreview': return onChangePreview(m);
       case 'searchResults': return onSearchResults(m);
+      case 'iconTheme': return onIconTheme(m);
       case 'stashes': return onStashes(m);
       case 'stashFiles': return onStashFiles(m);
       case 'confirm': return showConfirm(m);
@@ -1718,6 +1726,17 @@
   // Panel de detalles
   // -------------------------------------------------------------------------
 
+  /** Fila de una carpeta del árbol de archivos de los detalles de un commit. */
+  function detailFolderRow(key, label, depth, isOpen, count) {
+    return `<div class="tnode" data-fkey="${esc(key)}" data-pad="${6 + depth * 14}">${twisty(isOpen)}<span class="ico-folder">${folderIcon(label, isOpen)}</span><span class="label">${esc(label)}</span><span class="hint">${count} file${count === 1 ? '' : 's'}</span></div>`;
+  }
+
+  /** Fila de un archivo de los detalles de un commit (idx: su posición en details.files). */
+  function detailFileRow(f, idx, name, depth) {
+    const tip = f.oldPath ? `${f.oldPath} → ${f.path}` : f.path;
+    return `<div class="tnode" data-file="${idx}" data-pad="${6 + depth * 14}" title="${esc(tip)}"><span class="twisty"></span><span class="st-${f.status}">${fileIcon(name)}</span><span class="label st-${f.status}">${esc(name)}</span>${f.oldPath ? `<span class="hint">renamed</span>` : ''}</div>`;
+  }
+
   function renderDetails() {
     const d = details;
     if (!d) { return; }
@@ -1747,19 +1766,18 @@
         const key = 'f:' + prefix + label;
         const isOpen = !ui.expanded.has('collapsed:' + key);
         const count = countFiles(c);
-        html += `<div class="tnode" data-fkey="${esc(key)}" data-pad="${6 + depth * 14}">${twisty(isOpen)}<span class="ico-folder">${ICON.folder}</span><span class="label">${esc(label)}</span><span class="hint">${count} file${count === 1 ? '' : 's'}</span></div>`;
+        html += detailFolderRow(key, label, depth, isOpen, count);
         if (isOpen) { walk(c, depth + 1, prefix + label + '/'); }
       }
       for (const { f, name } of n.files.sort((a, b) => a.name.localeCompare(b.name))) {
-        const idx = d.files.indexOf(f);
-        const tip = f.oldPath ? `${f.oldPath} → ${f.path}` : f.path;
-        html += `<div class="tnode" data-file="${idx}" data-pad="${6 + depth * 14}" title="${esc(tip)}"><span class="twisty"></span><span class="st-${f.status}">${ICON.file}</span><span class="label st-${f.status}">${esc(name)}</span>${f.oldPath ? `<span class="hint">renamed</span>` : ''}</div>`;
+        html += detailFileRow(f, d.files.indexOf(f), name, depth);
       }
     };
     walk(root, 1, '');
     if (!d.files.length) { html += '<div class="empty">No file changes in this commit.</div>'; }
     filesEl.innerHTML = html;
     applyPositions(filesEl);
+    jbFileIcons.apply(filesEl);
 
     // Mensaje y metadatos
     const lines = d.message.split('\n');
@@ -2466,7 +2484,7 @@
     const slash = c.path.lastIndexOf('/');
     const hint = c.oldPath ? `← ${c.oldPath}` : showDir && slash >= 0 ? c.path.slice(0, slash) : '';
     return `<div class="tnode${chSel.has(k) ? ' selected' : ''}" data-ck="${esc(k)}" data-pad="${6 + depth * 14}" title="${esc(c.path)} — ${STATUS_NAME[c.status] || c.status}">` +
-      `<span class="twisty"></span><span class="${stClass(c.status)}">${ICON.file}</span><span class="label ${stClass(c.status)}">${esc(c.path.slice(slash + 1))}</span>${hint ? `<span class="hint">${esc(hint)}</span>` : ''}</div>`;
+      `<span class="twisty"></span><span class="${stClass(c.status)}">${fileIcon(c.path)}</span><span class="label ${stClass(c.status)}">${esc(c.path.slice(slash + 1))}</span>${hint ? `<span class="hint">${esc(hint)}</span>` : ''}</div>`;
   }
 
   function renderChanges(forcePreview) {
@@ -2495,6 +2513,7 @@
     }
     changesTreeEl.innerHTML = html;
     applyPositions(changesTreeEl);
+    jbFileIcons.apply(changesTreeEl);
     updateActionBar();
     updateCommitButtons();
     updatePreview(forcePreview === true);
@@ -2566,6 +2585,14 @@
       if (change) { vscode.postMessage({ type: 'previewChange', change }); }
     }
     renderPreview(change, count);
+  }
+
+  /** Llega el tema de iconos de archivos de VS Code (o null: sin iconos del tema): se repintan las listas de archivos. */
+  function onIconTheme(m) {
+    jbFileIcons.setTheme(m.theme);
+    if (details) { renderDetails(); }
+    if (changes) { renderChanges(false); }
+    if (stashFiles) { renderStashFiles(); }
   }
 
   function onChangePreview(m) {
@@ -2932,8 +2959,9 @@
     const plural = n => `${n} file${n === 1 ? '' : 's'}`;
     const folderRow = (key, icon, label, count, d) => {
       const open = !ui.expanded.has('closed:' + key);
+      const ic = typeof icon === 'function' ? icon(open) : icon;   // una función: el icono depende de si está abierta
       return { open, html: `<div class="tnode folder" data-fold="${esc(key)}" data-pad="${6 + d * 14}">${twisty(open)}` +
-        `<span class="ico-folder">${icon}</span><span class="label">${esc(label)}</span><span class="hint">${plural(count)}</span></div>` };
+        `<span class="ico-folder">${ic}</span><span class="label">${esc(label)}</span><span class="hint">${plural(count)}</span></div>` };
     };
     const byName = (a, b) => a.path.localeCompare(b.path);
     let html = '';
@@ -2980,7 +3008,7 @@
         const key = prefix + 'dir:' + full;
         const inside = all(c);
         folders.set(key, inside);
-        const r = folderRow(key, ICON.folder, label, inside.length, d);
+        const r = folderRow(key, o => folderIcon(label, o), label, inside.length, d);
         html += r.html;
         if (r.open) { walk(c, d + 1, full); }
       }
@@ -4127,6 +4155,16 @@
     renderStashFiles();
   }
 
+  /** Fila de un archivo del stash seleccionado (f.i: su posición en la lista; showDir: su carpeta en gris, en lista plana). */
+  function stashFileRow(f, depth, showDir) {
+    const st = f.untracked ? 'Q' : f.status;
+    const slash = f.path.lastIndexOf('/');
+    const dir = showDir && slash >= 0 ? f.path.slice(0, slash) : '';
+    const hint = f.oldPath ? `← ${f.oldPath}` : [dir, f.untracked ? 'unversioned' : ''].filter(Boolean).join(' · ');
+    return `<div class="tnode${f.i === stashFileSel ? ' selected' : ''}" data-sf="${f.i}" data-pad="${6 + depth * 14}" title="${esc(f.path)}">` +
+      `<span class="twisty"></span><span class="st-${st}">${fileIcon(f.path)}</span><span class="label st-${st}">${esc(f.path.slice(slash + 1))}</span>${hint ? `<span class="hint">${esc(hint)}</span>` : ''}</div>`;
+  }
+
   function renderStashFiles() {
     const cur = currentStash();
     $('#stash-files-title').textContent = cur ? `${data && data.multi ? repoName(cur.repo) + ' · ' : ''}${cur.ref} — ${cur.message}` : 'Files';
@@ -4137,17 +4175,11 @@
     else if (stashFiles.error) { html = `<div class="empty error">${esc(stashFiles.error)}</div>`; }
     else {
       const rows = stashFiles.files.map((f, i) => ({ ...f, i, repo: cur.repo }));
-      html = fileTreeRows(rows, 0, 'stf:', ui.stashGroupBy, (f, depth, showDir) => {
-        const st = f.untracked ? 'Q' : f.status;
-        const slash = f.path.lastIndexOf('/');
-        const dir = showDir && slash >= 0 ? f.path.slice(0, slash) : '';
-        const hint = f.oldPath ? `← ${f.oldPath}` : [dir, f.untracked ? 'unversioned' : ''].filter(Boolean).join(' · ');
-        return `<div class="tnode${f.i === stashFileSel ? ' selected' : ''}" data-sf="${f.i}" data-pad="${6 + depth * 14}" title="${esc(f.path)}">` +
-          `<span class="twisty"></span><span class="st-${st}">${ICON.file}</span><span class="label st-${st}">${esc(f.path.slice(slash + 1))}</span>${hint ? `<span class="hint">${esc(hint)}</span>` : ''}</div>`;
-      }, stashFolders);
+      html = fileTreeRows(rows, 0, 'stf:', ui.stashGroupBy, stashFileRow, stashFolders);
     }
     stashFilesEl.innerHTML = html;
     applyPositions(stashFilesEl);
+    jbFileIcons.apply(stashFilesEl);
   }
 
   const stashAction = (action, st) => vscode.postMessage({ type: 'stashAction', action, ref: st ? st.ref : '', id: st ? st.id : '' });

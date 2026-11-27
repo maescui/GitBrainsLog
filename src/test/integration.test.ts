@@ -13,9 +13,10 @@ import { TestRepo, GIT_ENV, tmpDir, rm } from './helpers';
 import { Git } from '../git';
 import { GitLogViewProvider } from '../extension';
 import { watchSpecs, escAttr } from '../core';
+import { watchFileIcons } from '../fileIcons';
 
 const cleanup: (() => void)[] = [];
-afterEach(() => { cleanup.splice(0).reverse().forEach(f => { try { f(); } catch { /* ya borrado */ } }); delete stubConfig.autoStage; delete stubConfig.repositoryScanMaxDepth; delete stubConfig.maxCommits; });
+afterEach(() => { cleanup.splice(0).reverse().forEach(f => { try { f(); } catch { /* ya borrado */ } }); delete stubConfig.autoStage; delete stubConfig.repositoryScanMaxDepth; delete stubConfig.maxCommits; delete stubConfig.iconTheme; });
 
 /** Repo con a.txt, b.txt y c.txt commiteados. */
 function newRepo(extra: Record<string, string> = {}): TestRepo {
@@ -1033,5 +1034,111 @@ describe('búsqueda del log en todo el historial (no solo lo cargado)', () => {
     assert.equal(m.commits.length, 3);
     for (let i = 1; i < m.commits.length; i++) { assert.ok(m.commits[i - 1].ctime >= m.commits[i].ctime); }
     assert.deepEqual(new Set(m.commits.map((c: any) => c.repo)), new Set([0, 1]));
+  });
+});
+
+describe('iconos de archivos: el tema de iconos de VS Code llega a la página', () => {
+  /** Una extensión de iconos de mentira (con su tema y sus SVG) en una carpeta temporal. */
+  function themeExtension(id = 'mi-tema', themeJson?: string): { packageJSON: any; extensionPath: string } {
+    const dir = tmpDir('jbgit-iconext-');
+    cleanup.push(() => rm(dir));
+    mkdirSync(path.join(dir, 'icons'), { recursive: true });
+    for (const n of ['file', 'folder', 'ts', 'light-file']) { writeFileSync(path.join(dir, 'icons', `${n}.svg`), `<svg xmlns="http://www.w3.org/2000/svg"><!--${id}-${n}--></svg>`); }
+    writeFileSync(path.join(dir, 'theme.json'), themeJson ?? JSON.stringify({
+      iconDefinitions: {
+        file: { iconPath: './icons/file.svg' }, folder: { iconPath: './icons/folder.svg' }, ts: { iconPath: './icons/ts.svg' }, lightFile: { iconPath: './icons/light-file.svg' },
+      },
+      file: 'file', folder: 'folder', fileExtensions: { ts: 'ts' }, light: { file: 'lightFile' },
+    }));
+    return { packageJSON: { contributes: { iconThemes: [{ id, path: './theme.json' }] } }, extensionPath: dir };
+  }
+  /** Abre el panel con ese tema de iconos activo (las extensiones se preparan antes de que la página mande «ready»). */
+  async function openWith(iconTheme: string | null, ...exts: { packageJSON: any; extensionPath: string }[]) {
+    const r = newRepo();
+    const p = await openPanel([r.root], { setup: () => { stubState.extensions = exts; stubConfig.iconTheme = iconTheme; } });
+    cleanup.push(() => p.dispose());
+    return p;
+  }
+  const themes = (p: Panel) => p.posted.filter(m => m.type === 'iconTheme');
+  const decode = (uri: string) => Buffer.from(uri.split(',')[1], 'base64').toString('utf8');
+
+  test('al arrancar la página recibe el tema activo, con sus iconos como data: URI', async () => {
+    const p = await openWith('mi-tema', themeExtension());
+    await until(() => themes(p).length >= 1, 'el mensaje iconTheme');
+    const t = themes(p)[0].theme;
+    assert.equal(t.id, 'mi-tema');
+    assert.equal(decode(t.defs.ts.src), '<svg xmlns="http://www.w3.org/2000/svg"><!--mi-tema-ts--></svg>');
+    assert.deepEqual([t.file, t.folder, t.fileExtensions], ['file', 'folder', { ts: 'ts' }]);
+  });
+
+  test('con «None» (null) llega un tema null: iconos de siempre', async () => {
+    const p = await openWith(null, themeExtension());
+    await until(() => themes(p).length >= 1, 'el mensaje iconTheme');
+    assert.equal(themes(p)[0].theme, null);
+  });
+
+  test('un tema que ninguna extensión instalada trae: null', async () => {
+    const p = await openWith('no-existe', themeExtension());
+    await until(() => themes(p).length >= 1, 'el mensaje iconTheme');
+    assert.equal(themes(p)[0].theme, null);
+  });
+
+  test('un tema que no se puede leer: null y sin error en la página', async () => {
+    const p = await openWith('mi-tema', themeExtension('mi-tema', '{ esto no es json'));
+    await until(() => themes(p).length >= 1, 'el mensaje iconTheme');
+    assert.equal(themes(p)[0].theme, null);
+    assert.equal(p.posted.filter(m => m.type === 'error').length, 0);
+  });
+
+  test('si el usuario cambia de tema de iconos, la página recibe el nuevo', async () => {
+    const p = await openWith('mi-tema', themeExtension('mi-tema'), themeExtension('otro'));
+    await until(() => themes(p).length >= 1, 'el primer tema');
+    const w = watchFileIcons(); cleanup.push(() => w.dispose());
+    stubConfig.iconTheme = 'otro';
+    stubState.changeConfig('workbench.iconTheme');
+    await until(() => themes(p).some(m => m.theme?.id === 'otro'), 'el tema nuevo');
+    stubConfig.iconTheme = null;
+    stubState.changeConfig('workbench.iconTheme');
+    await until(() => themes(p).some(m => m.theme === null), 'None');
+  });
+
+  test('si cambia el tema de color a uno claro, llega la variante clara del tema', async () => {
+    const p = await openWith('mi-tema', themeExtension());
+    await until(() => themes(p).length >= 1, 'el primer tema');
+    assert.equal(themes(p)[0].theme.file, 'file');
+    const w = watchFileIcons(); cleanup.push(() => w.dispose());
+    stubState.changeColorTheme(1);
+    await until(() => themes(p).some(m => m.theme?.file === 'lightFile'), 'la variante clara');
+  });
+
+  test('si se instalan extensiones, se vuelve a leer (el tema puede ser nuevo)', async () => {
+    const p = await openWith('mi-tema');                       // el tema aún no está instalado
+    await until(() => themes(p).length >= 1, 'el primer mensaje');
+    assert.equal(themes(p)[0].theme, null);
+    const w = watchFileIcons(); cleanup.push(() => w.dispose());
+    stubState.extensions = [themeExtension()];
+    stubState.changeExtensions();
+    await until(() => themes(p).some(m => m.theme?.id === 'mi-tema'), 'el tema ya instalado');
+  });
+
+  test('otros ajustes de VS Code no mandan nada', async () => {
+    const p = await openWith('mi-tema', themeExtension());
+    await until(() => themes(p).length >= 1, 'el primer tema');
+    const w = watchFileIcons(); cleanup.push(() => w.dispose());
+    const before = themes(p).length;
+    stubState.changeConfig('editor.fontSize');
+    await sleep(150);
+    assert.equal(themes(p).length, before);
+  });
+
+  test('al cerrar el panel deja de mandar', async () => {
+    const p = await openWith('mi-tema', themeExtension());
+    await until(() => themes(p).length >= 1, 'el primer tema');
+    const w = watchFileIcons(); cleanup.push(() => w.dispose());
+    p.dispose();
+    const before = themes(p).length;
+    stubState.changeConfig('workbench.iconTheme');
+    await sleep(150);
+    assert.equal(themes(p).length, before);
   });
 });

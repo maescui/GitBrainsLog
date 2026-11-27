@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { FileChange, Git, HistoryEntry } from './git';
 import { fontAttrs } from './fonts';
 import { nonce as newNonce } from './core';
+import { FileIconsFeed } from './fileIcons';
 
 /** Árbol vacío de git: el «padre» del commit raíz. */
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
@@ -39,7 +40,11 @@ export class ComparePanel {
     private readonly history?: HistoryTarget,
   ) {
     panel.webview.onDidReceiveMessage(m => this.onMessage(m));
+    panel.onDidDispose(() => this.icons.dispose());
   }
+
+  /** Los iconos de archivos del tema de iconos de VS Code: al arrancar la página y cuando cambian. */
+  private readonly icons = new FileIconsFeed(msg => this.post(msg));
 
   static open(media: vscode.Uri, git: Git, left: string, right: string | undefined, title: string, openNative: OpenNative,
     column: vscode.ViewColumn) {
@@ -109,6 +114,8 @@ export class ComparePanel {
   private async onMessage(m: any) {
     switch (m?.type) {
       case 'ready':
+        this.icons.sendNow();
+        return this.load();
       case 'refresh':
         return this.load();
       case 'selectCommit':
@@ -144,11 +151,12 @@ export class ComparePanel {
     const nonce = newNonce();
     const css = webview.asWebviewUri(vscode.Uri.joinPath(media, 'compare.css'));
     const js = webview.asWebviewUri(vscode.Uri.joinPath(media, 'compare.js'));
+    const icons = webview.asWebviewUri(vscode.Uri.joinPath(media, 'fileicons.js'));
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; img-src ${webview.cspSource} data:; script-src 'nonce-${nonce}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; img-src ${webview.cspSource} data:; font-src data:; script-src 'nonce-${nonce}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="${css}">
 <title>Compare</title>
@@ -189,6 +197,7 @@ export class ComparePanel {
     </div>
   </section>
 </div>
+<script nonce="${nonce}" src="${icons}"></script>
 <script nonce="${nonce}" src="${js}"></script>
 </body>
 </html>`;

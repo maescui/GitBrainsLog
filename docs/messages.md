@@ -41,7 +41,7 @@ Los mensajes son objetos `{ type, … }`. Esta lista debe coincidir con lo que m
 - `dialogResult`
 - `uiState`
 
-## Hacia el webview (13)
+## Hacia el webview (14)
 
 - `data`
 - `confirm`
@@ -55,4 +55,5 @@ Los mensajes son objetos `{ type, … }`. Esta lista debe coincidir con lo que m
 - `stashFiles`
 - `noRepo`
 - `searchResults`
+- `iconTheme`
 - `error`

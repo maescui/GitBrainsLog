@@ -123,3 +123,7 @@ input[type=checkbox]:checked::after {
 input[type=checkbox]:hover:not(:disabled) { border-color: var(--vscode-focusBorder); }
 input[type=checkbox]:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
 input[type=checkbox]:disabled { opacity: .5; cursor: default; }
+
+/* Iconos de archivos y carpetas del tema de iconos de VS Code (media/fileicons.js): imágenes o caracteres de una fuente */
+.ficon { width: 16px; height: 16px; flex: none; display: block; }
+.ficon-g { width: 16px; text-align: center; line-height: 16px; overflow: visible; }

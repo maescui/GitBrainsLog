@@ -70,9 +70,10 @@ export function fakeWebview() {
 }
 
 /** Abre el panel sobre estas carpetas del workspace y espera a que cargue el log y los cambios. */
-export async function openPanel(folders: string[], opts: { wait?: boolean } = {}): Promise<Panel> {
+export async function openPanel(folders: string[], opts: { wait?: boolean; setup?: () => void } = {}): Promise<Panel> {
   stubState.reset();
   stubState.folders = folders;
+  opts.setup?.();   // p. ej. las extensiones instaladas: tiene que ser antes de que la página mande «ready»
   const ROOT = path.join(__dirname, '..', '..');
   const context: any = {
     extensionUri: { fsPath: ROOT, path: ROOT, scheme: 'file' },

@@ -447,7 +447,9 @@ describe('ignoreEscape', () => {
 describe('fileTreeRows', () => {
   const ICON = { repo: '[R]', folder: '[F]', chevron: '>' };
   const repos = ['backend', 'frontend'];
-  const sb = sandbox(MAIN, ['esc', 'twisty', 'fileTreeRows'], { ICON, ui: { expanded: new Set<string>() }, repoName: (i: number) => repos[i] ?? '' });
+  const ui = { expanded: new Set<string>() };
+  const folderIcon = (name: string, open: boolean) => `[F:${name}:${open}]`;   // el icono del tema o el de siempre
+  const sb = sandbox(MAIN, ['esc', 'twisty', 'fileTreeRows'], { ICON, folderIcon, ui, repoName: (i: number) => repos[i] ?? '' });
   const fileRow = (f: { path: string }, depth: number, showDir: boolean) => `<FILE ${f.path} ${depth} ${showDir}>`;
   /** Filas como texto: carpetas «D label (n files) pad» y archivos «F ruta depth showDir». */
   function render(files: { path: string; repo: number }[], groupBy: { directory: boolean; repository: boolean }, multi = false) {
@@ -463,6 +465,18 @@ describe('fileTreeRows', () => {
     const { rows, folders } = render([F('src/main/java/B.java'), F('src/main/java/A.java'), F('README.md')], { directory: true, repository: false });
     assert.deepEqual(rows, ['D src/main/java (2 files) 6', 'F src/main/java/A.java 1 false', 'F src/main/java/B.java 1 false', 'F README.md 0 false']);
     assert.equal(folders.get('p:dir:src/main/java')!.length, 2);
+  });
+
+  test('las carpetas llevan el icono del tema, abierto o cerrado según estén; el repo, el suyo de siempre', () => {
+    const files = [F('src/main/java/A.java'), F('docs/x.md')];
+    const html = (g: { directory: boolean; repository: boolean }) => sb.fileTreeRows(files, 0, 'p:', g, fileRow, new Map(), false) as string;
+    const open = html({ directory: true, repository: false });
+    assert.match(open, /<span class="ico-folder">\[F:src\/main\/java:true\]<\/span>/, 'la cadena compactada, con su nombre entero');
+    assert.match(open, /<span class="ico-folder">\[F:docs:true\]<\/span>/);
+    ui.expanded.add('closed:p:dir:docs');
+    assert.match(html({ directory: true, repository: false }), /\[F:docs:false\]/, 'plegada: el icono de cerrada');
+    ui.expanded.delete('closed:p:dir:docs');
+    assert.match(html({ directory: true, repository: true }), /<span class="ico-folder">\[R\]<\/span>/, 'el nodo del repo conserva su icono');
   });
 
   test('Directory: una carpeta con archivos propios no se junta con su subcarpeta', () => {
@@ -482,7 +496,7 @@ describe('fileTreeRows', () => {
   });
 
   test('las carpetas plegadas no muestran su contenido', () => {
-    const closed = sandbox(MAIN, ['esc', 'twisty', 'fileTreeRows'], { ICON, ui: { expanded: new Set(['closed:p:dir:src']) }, repoName: () => '' });
+    const closed = sandbox(MAIN, ['esc', 'twisty', 'fileTreeRows'], { ICON, folderIcon, ui: { expanded: new Set(['closed:p:dir:src']) }, repoName: () => '' });
     const html: string = closed.fileTreeRows([F('src/a.ts')], 0, 'p:', { directory: true, repository: false }, fileRow, new Map(), false);
     assert.ok(!html.includes('<FILE'));
   });
@@ -982,6 +996,128 @@ describe('búsqueda del log: lo cargado y lo que encuentra git en todo el histor
   });
 });
 
+describe('iconos del tema de iconos de VS Code en las filas de archivos', () => {
+  const ICON = { file: '[file]', folder: '[folder]' };
+  const asked: unknown[][] = [];
+  const withTheme = (answer: string) => sandbox(MAIN, ['fileIcon', 'folderIcon'], { ICON, jbFileIcons: { html: (...a: unknown[]) => { asked.push(a); return answer; } } });
+
+  test('con icono del tema, ese; sin él (o sin tema), el de siempre', () => {
+    const themed = withTheme('<img class="ficon">');
+    assert.equal(themed.fileIcon('a.ts'), '<img class="ficon">');
+    assert.equal(themed.folderIcon('src', true), '<img class="ficon">');
+    const none = withTheme('');
+    assert.equal(none.fileIcon('a.ts'), '[file]');
+    assert.equal(none.folderIcon('src', false), '[folder]');
+  });
+
+  test('al tema se le pregunta por el nombre, si es carpeta y si está abierta', () => {
+    asked.length = 0;
+    const s = withTheme('x');
+    s.fileIcon('src/a.ts'); s.folderIcon('src', true); s.folderIcon('docs', false);
+    assert.deepEqual(asked, [['src/a.ts', false], ['src', true, true], ['docs', true, false]]);
+  });
+
+  test('la fila de un cambio de Local Changes lleva el icono del archivo, con el nombre y el estado de siempre', () => {
+    const fileIcon = (p: string) => `[ICON:${p}]`;
+    const s = sandbox(MAIN, ['esc', 'changeRow'], {
+      fileIcon, chKey: (c: { path: string }) => c.path, chSel: new Set(), STATUS_NAME: { M: 'Modified' }, stClass: (st: string) => `st-${st}`,
+    });
+    const row: string = s.changeRow({ path: 'src/Task.java', status: 'M' }, 1, false);
+    assert.match(row, /<span class="st-M">\[ICON:src\/Task\.java\]<\/span><span class="label st-M">Task\.java<\/span>/);
+  });
+
+  function iconThemePage() {
+    const calls = { themes: [] as unknown[], details: 0, changes: [] as unknown[], stash: 0 };
+    const s = sandbox(MAIN, ['onIconTheme'], {
+      jbFileIcons: { setTheme: (t: unknown) => calls.themes.push(t) },
+      renderDetails: () => calls.details++, renderChanges: (f: unknown) => calls.changes.push(f), renderStashFiles: () => calls.stash++,
+    }, 'let details = null, changes = null, stashFiles = null;', ['details', 'changes', 'stashFiles']);
+    return { ...s, calls };
+  }
+
+  test('al llegar el tema se pone, y solo se repinta lo que tiene datos', () => {
+    const p = iconThemePage();
+    p.onIconTheme({ theme: { id: 't' } });
+    assert.deepEqual(p.calls, { themes: [{ id: 't' }], details: 0, changes: [], stash: 0 });
+    p.set_details({}); p.set_changes({}); p.set_stashFiles({});
+    p.onIconTheme({ theme: { id: 'u' } });
+    assert.deepEqual([p.calls.details, p.calls.changes, p.calls.stash], [1, [false], 1]);
+  });
+
+  test('un tema null (None) también se pone: vuelven los iconos de siempre', () => {
+    const p = iconThemePage();
+    p.onIconTheme({ theme: null });
+    assert.deepEqual(p.calls.themes, [null]);
+  });
+
+  /** Las filas de los detalles de un commit y del stash, con el icono simulado como «[ICON:nombre]». */
+  function rows() {
+    const stubs = {
+      fileIcon: (n: string) => `[FILE:${n}]`, folderIcon: (n: string, open: boolean) => `[DIR:${n}:${open}]`, twisty: (o: boolean) => `<tw ${o}>`,
+    };
+    return sandbox(MAIN, ['esc', 'detailFolderRow', 'detailFileRow', 'stashFileRow'], stubs, 'let stashFileSel = -1;', ['stashFileSel']);
+  }
+
+  test('detalles de un commit: la carpeta lleva el icono según esté abierta, y el archivo el suyo por su nombre', () => {
+    const s = rows();
+    const dir: string = s.detailFolderRow('f:src/main', 'src/main', 1, false, 1);
+    assert.match(dir, /data-fkey="f:src\/main" data-pad="20"><tw false><span class="ico-folder">\[DIR:src\/main:false\]<\/span><span class="label">src\/main<\/span><span class="hint">1 file<\/span>/);
+    assert.match(s.detailFolderRow('k', 'x', 0, true, 3), /\[DIR:x:true\].*3 files/);
+    const file: string = s.detailFileRow({ status: 'M', path: 'src/main/Task.java' }, 4, 'Task.java', 2);
+    assert.match(file, /data-file="4" data-pad="34" title="src\/main\/Task\.java"><span class="twisty"><\/span><span class="st-M">\[FILE:Task\.java\]<\/span><span class="label st-M">Task\.java<\/span><\/div>$/);
+    assert.match(s.detailFileRow({ status: 'R', path: 'b.txt', oldPath: 'a.txt' }, 0, 'b.txt', 1), /title="a\.txt → b\.txt".*<span class="hint">renamed<\/span>/);
+  });
+
+  test('lista de Compare / Show History: el icono va entre el estado y el nombre, y se aplican las fuentes', () => {
+    const applied: unknown[] = [];
+    const listEl = { innerHTML: '' };
+    const files = [{ status: 'M', path: 'src/Task.java' }, { status: 'A', path: 'README.md' }];
+    const s = sandbox(COMPARE, ['esc', 'base', 'dir', 'renderList'], {
+      files, selected: 1, listEl, visibleFiles: () => files.map((f, i) => ({ f, i })),
+      jbFileIcons: { html: (p: string, folder: boolean) => `[I:${p}:${folder}]`, apply: (el: unknown) => applied.push(el) },
+    });
+    s.renderList();
+    assert.match(listEl.innerHTML, /<span class="st st-M">M<\/span>\[I:src\/Task\.java:false\]<span class="fname">Task\.java<\/span>/);
+    assert.match(listEl.innerHTML, /class="fi selected" data-i="1".*<span class="st st-A">A<\/span>\[I:README\.md:false\]<span class="fname">README\.md<\/span>/);
+    assert.deepEqual(applied, [listEl]);
+  });
+
+  test('lista de Compare: sin tema (html devuelve vacío) la fila queda como antes, sin hueco', () => {
+    const listEl = { innerHTML: '' };
+    const files = [{ status: 'M', path: 'a.txt' }];
+    const s = sandbox(COMPARE, ['esc', 'base', 'dir', 'renderList'], {
+      files, selected: -1, listEl, visibleFiles: () => [{ f: files[0], i: 0 }], jbFileIcons: { html: () => '', apply() { /* nada */ } },
+    });
+    s.renderList();
+    assert.match(listEl.innerHTML, /<span class="st st-M">M<\/span><span class="fname">a\.txt<\/span>/);
+  });
+
+  test('ventana de Push: el icono del archivo va entre el estado y el nombre', () => {
+    const el = { innerHTML: '' };
+    const applied: unknown[] = [];
+    const push = { sel: { hash: 'h1' }, files: null as unknown };
+    const s = sandbox(DIALOG, ['esc', 'onPushFiles'], {
+      push, root: { querySelector: () => el },
+      jbFileIcons: { html: (p: string) => `[I:${p}]`, apply: (e: unknown) => applied.push(e) },
+    });
+    s.onPushFiles({ hash: 'h1', files: [{ status: 'M', path: 'src/Task.java' }, { status: 'A', path: 'x.md' }] });
+    assert.match(el.innerHTML, /<span class="pd-st st-M">M<\/span>\[I:src\/Task\.java\]<span class="pd-fname">Task\.java<\/span>/);
+    assert.match(el.innerHTML, /<span class="pd-st st-A">A<\/span>\[I:x\.md\]<span class="pd-fname">x\.md<\/span>/);
+    assert.deepEqual(applied, [el]);
+    s.onPushFiles({ hash: 'otro', files: [{ status: 'M', path: 'z' }] });
+    assert.ok(!el.innerHTML.includes('[I:z]'), 'la respuesta de otro commit no repinta');
+  });
+
+  test('stash: el archivo lleva el icono de su ruta; sin seguimiento (Q) y la carpeta en gris, como antes', () => {
+    const s = rows();
+    s.set_stashFileSel(7);
+    const tracked: string = s.stashFileRow({ i: 7, path: 'src/a.ts', status: 'M' }, 1, true);
+    assert.match(tracked, /^<div class="tnode selected" data-sf="7" data-pad="20" title="src\/a\.ts"><span class="twisty"><\/span><span class="st-M">\[FILE:src\/a\.ts\]<\/span><span class="label st-M">a\.ts<\/span><span class="hint">src<\/span><\/div>$/);
+    const untracked: string = s.stashFileRow({ i: 2, path: 'nuevo.txt', untracked: true }, 0, false);
+    assert.match(untracked, /class="tnode" data-sf="2".*<span class="st-Q">\[FILE:nuevo\.txt\]<\/span>.*<span class="hint">unversioned<\/span>/);
+  });
+});
+
 describe('reglas de CSP en media/*.js', () => {
   for (const [name, src] of SCRIPTS) {
     const code = stripComments(src);
@@ -1027,6 +1163,7 @@ describe('tipos de mensaje (docs/messages.md ↔ código)', () => {
   // Lo que manda la extensión a la vista: this.post({ type: … }) y dialogInPanel('…')
   const extSends = new Set([
     ...[...ext.matchAll(/this\.post\(\{\s*type: '([a-zA-Z]+)'/g)].map(m => m[1]),
+    ...[...read('src/fileIcons.ts').matchAll(/this\.post\(\{\s*type: '([a-zA-Z]+)'/g)].map(m => m[1]),   // los iconos de archivos (FileIconsFeed)
     ...[...ext.matchAll(/dialogInPanel\('([a-zA-Z]+)'/g)].map(m => m[1]),
   ]);
   const minus = (a: Set<string>, b: Set<string>) => [...a].filter(x => !b.has(x)).sort();

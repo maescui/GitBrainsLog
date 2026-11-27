@@ -6,7 +6,7 @@
 
 La ventana **Git** de los IDE de JetBrains (IntelliJ, WebStorm, PyCharm…), dentro de VS Code.
 
-Un panel inferior con el log de commits y su grafo, el árbol de ramas, los cambios locales, los stashes y los ajustes, con los mismos menús contextuales y casi los mismos gestos que en JetBrains. Usa los colores del tema activo de VS Code, claro u oscuro.
+Un panel inferior con el log de commits y su grafo, el árbol de ramas, los cambios locales, los stashes y los ajustes, con los mismos menús contextuales y casi los mismos gestos que en JetBrains. Usa los colores del tema activo de VS Code, claro u oscuro. Los archivos y carpetas llevan los **iconos de tu tema de iconos de VS Code** (el que tengas en *File Icon Theme*: Seti, Material, JetBrains…); con *None* se ven los iconos de siempre.
 
 ![Pestaña Log: ramas, grafo de commits y detalles](docs/images/log.png)
 
