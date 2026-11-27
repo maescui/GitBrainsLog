@@ -4,6 +4,8 @@ Los cambios de cada versión de GitBrainsLog. El formato sigue [Keep a Changelog
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-27
+
 ### Añadido
 
 - **La búsqueda del Log encuentra en todo el historial.** Antes solo miraba los commits ya cargados (los de la página actual), así que lo más antiguo no salía hasta pulsar *Load more*. Ahora, mientras escribes, la página enseña al momento lo cargado que coincide, y git completa la búsqueda sobre todo el historial: por mensaje (asunto y cuerpo), por autor (nombre o correo) y por el principio de un hash, sin distinguir mayúsculas y como texto literal (`.*` o `[` no son expresiones regulares). Respeta la rama, el usuario, las fechas, las rutas y los repos del filtro del log. Si hay más de 5000 resultados avisa de que se enseñan los primeros.

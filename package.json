@@ -2,7 +2,7 @@
   "name": "gitbrainslog",
   "displayName": "GitBrainsLog",
   "description": "Panel de Git Log al estilo de los IDE de JetBrains: ramas, grafo de commits, detalles y menú contextual.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "MarioEscuderoIzquierdo",
   "icon": "GitBrainsLog_Logo.png",
   "license": "MIT",
