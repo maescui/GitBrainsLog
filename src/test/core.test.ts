@@ -5,7 +5,7 @@ import * as path from 'path';
 import {
   scanDepth, commitsPerPage, MAX_SCAN_DEPTH, MAX_COMMITS_PAGE, mergeArgs, MERGE_OPTIONS, autoBranchColor,
   validateSetting, validFontFamily, validFontSize, mergeLogs, FOLDER_COLOR_TOKENS, samePath, pathInside, safeRepoPath,
-  nestedRepos, pickMainRef,
+  nestedRepos, pickPinnedRef, pinnedBranchNames, pinnedBranchList, DEFAULT_PINNED_BRANCHES, datePattern, DEFAULT_DATE_PATTERN,
 } from '../core';
 import { MAIN_COLOR } from '../graph';
 
@@ -30,6 +30,14 @@ describe('scanDepth (jbGit.repositoryScanMaxDepth)', () => {
     const p = pkg.contributes.configuration.properties['jbGit.repositoryScanMaxDepth'];
     assert.equal(p.maximum, MAX_SCAN_DEPTH);
     assert.equal(p.minimum, 0);
+  });
+});
+
+describe('datePattern (jbGit.dateFormatPattern)', () => {
+  test('por defecto, el de package.json', () => assert.equal(datePattern(cfg({})), DEFAULT_DATE_PATTERN));
+  test('el patrón sin espacios alrededor', () => assert.equal(datePattern(cfg({ dateFormatPattern: ' yyyy-MM-dd ' })), 'yyyy-MM-dd'));
+  test('un valor escrito a mano que no vale: el de por defecto', () => {
+    for (const v of [5, {}, '', '   ', 'a\nb']) { assert.equal(datePattern(cfg({ dateFormatPattern: v })), DEFAULT_DATE_PATTERN, String(v)); }
   });
 });
 
@@ -100,7 +108,17 @@ describe('validateSetting (setSetting)', () => {
   test('dateFormat', () => {
     assert.equal(validateSetting('dateFormat', 'relative'), 'relative');
     assert.equal(validateSetting('dateFormat', 'absolute'), 'absolute');
+    assert.equal(validateSetting('dateFormat', 'custom'), 'custom');
     assert.equal(validateSetting('dateFormat', 'iso'), undefined);
+  });
+  test('dateFormatPattern: texto de una línea, no vacío y de hasta 100 caracteres', () => {
+    assert.equal(validateSetting('dateFormatPattern', ' yyyy-MM-dd HH:mm '), 'yyyy-MM-dd HH:mm');
+    assert.equal(validateSetting('dateFormatPattern', "EEE d MMM 'a las' HH:mm"), "EEE d MMM 'a las' HH:mm");
+    assert.equal(validateSetting('dateFormatPattern', ''), undefined);
+    assert.equal(validateSetting('dateFormatPattern', '   '), undefined);
+    assert.equal(validateSetting('dateFormatPattern', 'dd\nMM'), undefined);
+    assert.equal(validateSetting('dateFormatPattern', 'd'.repeat(101)), undefined);
+    assert.equal(validateSetting('dateFormatPattern', 3), undefined);
   });
   test('maxCommits: entero entre 100 y 10000', () => {
     assert.equal(validateSetting('maxCommits', 100), 100);
@@ -250,27 +268,85 @@ describe('rutas (samePath, pathInside, safeRepoPath)', () => {
   });
 });
 
-describe('pickMainRef (la rama principal de un repo, para el grafo)', () => {
-  const local = (name: string) => ({ type: 'local', name, full: `refs/heads/${name}` });
-  const remote = (remote: string, branch: string) => ({ type: 'remote', name: `${remote}/${branch}`, remote, branch, full: `refs/remotes/${remote}/${branch}` });
+// Refs de mentira para pickPinnedRef
+const local = (name: string) => ({ type: 'local', name, full: `refs/heads/${name}` });
+const remote = (remote: string, branch: string) => ({ type: 'remote', name: `${remote}/${branch}`, remote, branch, full: `refs/remotes/${remote}/${branch}` });
 
-  test('la local main', () => assert.equal(pickMainRef([local('dev'), local('main')])?.name, 'main'));
-  test('la local master si no hay main', () => assert.equal(pickMainRef([local('dev'), local('master')])?.name, 'master'));
-  test('main antes que master si hay las dos', () => assert.equal(pickMainRef([local('master'), local('main')])?.name, 'main'));
-  test('una local manda sobre la remota', () => assert.equal(pickMainRef([remote('origin', 'main'), local('master')])?.name, 'master'));
+describe('pickPinnedRef con main/master (la rama principal de un repo, para el grafo)', () => {
+  const pickMain = <R extends { type: string; name: string; remote?: string; branch?: string }>(refs: R[], remote?: string) => pickPinnedRef(refs, remote, DEFAULT_PINNED_BRANCHES);
 
-  test('sin ninguna local, la del remoto por defecto', () => {
-    assert.equal(pickMainRef([remote('upstream', 'main'), remote('origin', 'main')], 'origin')?.name, 'origin/main');
-    assert.equal(pickMainRef([remote('origin', 'master')], 'origin')?.name, 'origin/master');
+  test('la local main', () => assert.equal(pickMain([local('dev'), local('main')])?.name, 'main'));
+  test('la local master si no hay main', () => assert.equal(pickMain([local('dev'), local('master')])?.name, 'master'));
+  test('main antes que master si hay las dos', () => assert.equal(pickMain([local('master'), local('main')])?.name, 'main'));
+  test('manda la prioridad: main del remoto antes que master local', () => assert.equal(pickMain([remote('origin', 'main'), local('master')])?.name, 'origin/main'));
+  test('de la misma rama, la local antes que la remota', () => assert.equal(pickMain([remote('origin', 'main'), local('main')])?.name, 'main'));
+
+  test('sin la local, la del remoto por defecto', () => {
+    assert.equal(pickMain([remote('upstream', 'main'), remote('origin', 'main')], 'origin')?.name, 'origin/main');
+    assert.equal(pickMain([remote('origin', 'master')], 'origin')?.name, 'origin/master');
   });
 
   test('un remoto sin «branch» (se saca del nombre) también vale', () => {
-    assert.equal(pickMainRef([{ type: 'remote', name: 'origin/main', remote: 'origin' }], 'origin')?.name, 'origin/main');
+    assert.equal(pickMain([{ type: 'remote', name: 'origin/main', remote: 'origin' }], 'origin')?.name, 'origin/main');
   });
 
   test('ni main ni master: ninguna (ni un tag ni una rama que se llame parecido)', () => {
-    assert.equal(pickMainRef([local('develop'), local('main2'), local('feature/main'), { type: 'tag', name: 'main', full: 'refs/tags/main' }]), undefined);
-    assert.equal(pickMainRef([]), undefined);
+    assert.equal(pickMain([local('develop'), local('main2'), local('feature/main'), { type: 'tag', name: 'main', full: 'refs/tags/main' }]), undefined);
+    assert.equal(pickMain([]), undefined);
+  });
+});
+
+describe('pinnedBranchNames y pickPinnedRef con una lista de ramas (jbGit.graphPinBranch / graphPinnedBranch)', () => {
+  const pin = (enabled: unknown, names: unknown) => pinnedBranchNames(cfg({ graphPinBranch: enabled, graphPinnedBranch: names }));
+
+  test('por defecto: main y, si no hay, master', () => assert.deepEqual(pinnedBranchNames(cfg({})), ['main', 'master']));
+  test('la lista tal cual, en su orden, sin espacios, vacías ni repetidas', () => {
+    assert.deepEqual(pin(true, ['branchA', ' branchB ', '', 'branchA']), ['branchA', 'branchB']);
+    assert.deepEqual(pin(true, ['master']), ['master'], 'master solo ya no añade main');
+  });
+  test('desactivado, lista vacía o valor raro: ninguna', () => {
+    assert.deepEqual(pin(false, ['main']), []);
+    assert.deepEqual(pin(true, []), []);
+    assert.deepEqual(pin(true, ''), []);
+    assert.deepEqual(pin(true, 3), []);
+    assert.deepEqual(pin(true, ['dos palabras', 7]), []);
+  });
+
+  test('pinnedBranchList (lo que recibe Settings): siempre una lista, también desactivado o escrito a mano', () => {
+    assert.deepEqual(pinnedBranchList(cfg({ graphPinBranch: false, graphPinnedBranch: ['develop'] })), ['develop']);
+    assert.deepEqual(pinnedBranchList(cfg({ graphPinnedBranch: 'develop, main' })), [], 'un texto no es una lista');
+    assert.deepEqual(pinnedBranchList(cfg({ graphPinnedBranch: {} })), []);
+    assert.deepEqual(pinnedBranchList(cfg({ graphPinnedBranch: null })), []);
+    assert.deepEqual(pinnedBranchList(cfg({})), ['main', 'master']);
+  });
+
+  test('pickPinnedRef: la primera de la lista que exista', () => {
+    const refs = [local('main'), local('branchB')];
+    assert.equal(pickPinnedRef([...refs, local('branchA')], 'origin', ['branchA', 'branchB'])?.name, 'branchA');
+    assert.equal(pickPinnedRef(refs, 'origin', ['branchA', 'branchB'])?.name, 'branchB', 'sin branchA, branchB');
+    assert.equal(pickPinnedRef(refs, 'origin', ['branchA', 'branchC']), undefined, 'ninguna: no cae a main');
+    assert.equal(pickPinnedRef(refs, 'origin', []), undefined);
+  });
+  test('pickPinnedRef: la prioridad manda sobre local/remota (branchA del remoto antes que branchB local)', () => {
+    assert.equal(pickPinnedRef([local('branchB'), remote('origin', 'branchA')], 'origin', ['branchA', 'branchB'])?.name, 'origin/branchA');
+    assert.equal(pickPinnedRef([remote('origin', 'branchA'), local('branchA')], 'origin', ['branchA'])?.name, 'branchA');
+    assert.equal(pickPinnedRef([local('branchB'), remote('upstream', 'branchA')], 'origin', ['branchA', 'branchB'])?.name, 'branchB', 'solo el remoto por defecto');
+  });
+});
+
+describe('validateSetting de graphPinBranch y graphPinnedBranch', () => {
+  test('graphPinBranch: solo booleanos', () => {
+    assert.equal(validateSetting('graphPinBranch', false), false);
+    assert.equal(validateSetting('graphPinBranch', true), true);
+    assert.equal(validateSetting('graphPinBranch', 'no'), undefined);
+  });
+  test('graphPinnedBranch: lista de nombres sin espacios (vacía vale)', () => {
+    assert.deepEqual(validateSetting('graphPinnedBranch', [' feature/x ', 'main', '', 'main']), ['feature/x', 'main']);
+    assert.deepEqual(validateSetting('graphPinnedBranch', []), []);
+    assert.equal(validateSetting('graphPinnedBranch', ['main', 'dos palabras']), undefined);
+    assert.equal(validateSetting('graphPinnedBranch', ['x'.repeat(251)]), undefined);
+    assert.equal(validateSetting('graphPinnedBranch', ['main', 3]), undefined);
+    assert.equal(validateSetting('graphPinnedBranch', 'main'), undefined);
   });
 });
 

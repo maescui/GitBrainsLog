@@ -4,6 +4,7 @@ import * as os from 'os';
 import { promises as fs } from 'fs';
 import { Git } from './git';
 import { fontAttrs } from './fonts';
+import { tabIcon } from './tabIcon';
 import { nonce as newNonce } from './core';
 
 /**
@@ -129,7 +130,7 @@ export class MergePanel {
       retainContextWhenHidden: true,
       localResourceRoots: [media],
     });
-    panel.iconPath = vscode.Uri.joinPath(media, 'icon.svg');
+    panel.iconPath = tabIcon(media);
     const p = new MergePanel(panel, git, rel, crlf, onDone, openNative);
     open.set(k, p);
     panel.webview.html = p.html(media);

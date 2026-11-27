@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { fontAttrs } from './fonts';
+import { tabIcon } from './tabIcon';
 import { nonce as newNonce, escAttr as esc } from './core';
 import { FileIconsFeed } from './fileIcons';
 
@@ -29,7 +30,7 @@ export class DialogWindow {
         retainContextWhenHidden: true,
         localResourceRoots: [media],
       });
-      panel.iconPath = vscode.Uri.joinPath(media, 'icon.svg');
+      panel.iconPath = tabIcon(media);
       let done = false;
       const finish = (v: any) => {
         if (done) { return; }
@@ -58,6 +59,7 @@ export class DialogWindow {
     const css = webview.asWebviewUri(vscode.Uri.joinPath(media, 'dialog.css'));
     const js = webview.asWebviewUri(vscode.Uri.joinPath(media, 'dialog.js'));
     const icons = webview.asWebviewUri(vscode.Uri.joinPath(media, 'fileicons.js'));
+    const dates = webview.asWebviewUri(vscode.Uri.joinPath(media, 'dateformat.js'));
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -70,6 +72,7 @@ export class DialogWindow {
 <body${fontAttrs()}>
 <div id="dlg"></div>
 <script nonce="${nonce}" src="${icons}"></script>
+<script nonce="${nonce}" src="${dates}"></script>
 <script nonce="${nonce}" src="${js}"></script>
 </body>
 </html>`;

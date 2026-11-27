@@ -33,7 +33,7 @@ o en VS Code: *Extensions ▸ ⋯ ▸ Install from VSIX…*
 
 ### Log
 
-- **Grafo de commits** con un color fijo por rama (el mismo en cada recarga y en todos los repos). La rama principal (`main` o `master`) va siempre en la columna de la izquierda, aunque haya ramas más recientes. Las aristas que unen commits muy lejanos se cortan con una flecha que, al pulsarla, salta al otro extremo, como en JetBrains.
+- **Grafo de commits** con un color fijo por rama (el mismo en cada recarga y en todos los repos). La rama principal (`main` o, si no hay, `master`) va siempre en la columna de la izquierda, aunque haya ramas más recientes. Las ramas candidatas y su prioridad se eligen con `jbGit.graphPinnedBranch`; con `jbGit.graphPinBranch` desactivado no se fija ninguna. Las aristas que unen commits muy lejanos se cortan con una flecha que, al pulsarla, salta al otro extremo, como en JetBrains.
 - **Panel de ramas** con Local, Remote y Tags en árbol, indicadores ↑/↓, buscador, ramas favoritas (estrella) y ramas protegidas (candado). Doble clic en una rama filtra el log por ella.
 - **Filtros** junto al buscador: *Branch*, *User*, *Date* y *Paths*. Se combinan y filtran en git, así que valen sobre todo el historial.
 - **Búsqueda** por mensaje, autor (nombre o correo) o el principio de un hash, sin distinguir mayúsculas. La hace git sobre **todo el historial** del log (la misma rama, filtros y repos), no solo sobre los commits cargados: no hace falta pulsar *Load more* para encontrarlo.
@@ -105,11 +105,14 @@ Se editan en la pestaña **Settings** o en los ajustes de VS Code (`jbGit.*`).
 | Ajuste | Por defecto | Qué hace |
 |---|---|---|
 | `jbGit.maxCommits` | `1000` | Commits que se cargan de una vez (100–10000). *Load more* trae más. |
-| `jbGit.dateFormat` | `absolute` | Fecha en la tabla de commits: `absolute` o `relative`. |
+| `jbGit.dateFormat` | `absolute` | Fecha en la tabla de commits: `absolute`, `relative` o `custom` (con `jbGit.dateFormatPattern`). |
+| `jbGit.dateFormatPattern` | `dd/MM/yyyy HH:mm` | Patrón de la fecha con `custom`, con las letras de JetBrains / Java (`yyyy`, `MM`, `MMM`, `dd`, `EEE`, `HH`, `hh`, `mm`, `ss`, `a`; texto entre comillas simples tal cual). |
 | `jbGit.repositoryScanMaxDepth` | `2` | Niveles de subcarpetas en los que se buscan repositorios (0–5). |
 | `jbGit.autoStage` | `true` | Añade al stage solos los cambios de archivos con seguimiento. |
 | `jbGit.protectedBranches` | `["main", "master"]` | Ramas remotas que no se pueden borrar (llevan un candado). |
 | `jbGit.branchColors` | `{}` | Color del carril de cada rama en el grafo, por nombre. |
+| `jbGit.graphPinBranch` | `true` | Fija la línea de una rama (la primera de `jbGit.graphPinnedBranch` que exista) en la columna de la izquierda del grafo. Desactivado, cada rama toma el primer carril libre. |
+| `jbGit.graphPinnedBranch` | `["main", "master"]` | Ramas que pueden ir a la izquierda, de más a menos prioridad (sin el remoto). En cada repo se fija la primera que exista; si no hay ninguna, ninguna. |
 | `jbGit.folderColors` | bugfix, feature, release, hotfix | Color del icono de cada carpeta del árbol de ramas. |
 | `jbGit.tagColor` | `yellow` | Color de los tags. |
 | `jbGit.fontFamily` | `""` | Fuente de la interfaz de la extensión. Vacío = la de VS Code. |

@@ -53,7 +53,7 @@ export const MAIN_COLOR = 3;
  * él), para que una rama tenga siempre el mismo color, en todos los repos y en cada
  * recarga. Si devuelve undefined, el carril toma el siguiente color de la paleta.
  *
- * mainTips: los commits a los que apunta main/master (uno por repo). Su línea principal (la
+ * pinTips: los commits a los que apunta la rama fijada (uno por repo; puede ir vacío). Su línea principal (la
  * cadena de primeros padres) va siempre en el carril 0, a la izquierda del todo, aunque haya
  * ramas más nuevas que main o que salgan de ella: el carril 0 se reserva hasta el último commit
  * de esa línea, las demás ramas empiezan en el 1 y, si una espera a un commit de la línea
@@ -62,14 +62,14 @@ export const MAIN_COLOR = 3;
  * como cualquier otra rama, para que no salten de un carril a otro al terminar la primera.
  */
 export function computeGraph(commits: { hash: string; parents: string[] }[], showLongEdges = false,
-  colorOf: (hash: string) => GraphColor | undefined = () => undefined, mainTips: string[] = []): GraphRow[] {
+  colorOf: (hash: string) => GraphColor | undefined = () => undefined, pinTips: string[] = []): GraphRow[] {
   const n = commits.length;
   const rowOf = new Map(commits.map((c, i) => [c.hash, i]));
   // La línea principal: de la punta de main que sale primero, sus primeros padres (los mismos que
   // seguirá el bucle). Solo una: el carril 0 no se puede repartir entre varias
   const mainLine = new Set<string>();
   let lastMain = -1;
-  const tipRows = mainTips.map(t => rowOf.get(t)).filter((r): r is number => r !== undefined);
+  const tipRows = pinTips.map(t => rowOf.get(t)).filter((r): r is number => r !== undefined);
   let row: number | undefined = tipRows.length ? Math.min(...tipRows) : undefined;
   while (row !== undefined && !mainLine.has(commits[row].hash)) {
     mainLine.add(commits[row].hash);

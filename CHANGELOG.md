@@ -4,6 +4,15 @@ Los cambios de cada versión de GitBrainsLog. El formato sigue [Keep a Changelog
 
 ## [Unreleased]
 
+### Añadido
+
+- **Rama fijada a la izquierda del grafo, configurable.** `jbGit.graphPinnedBranch` es la lista de ramas que pueden ir siempre en la columna de la izquierda, de más a menos prioridad (por defecto `main, master`): en cada repo se fija la primera que exista, la local o, si no hay, la del remoto por defecto. `jbGit.graphPinBranch` lo activa o desactiva. Los dos están también en *Settings ▸ Log ▸ Graph*. Desactivado, o si no existe ninguna de la lista, cada rama toma el primer carril libre, como antes de la 1.1.0. Manda el orden de la lista, aunque la rama solo esté en el remoto: con el valor por defecto, un repo con `master` local y `origin/main` fija ahora `origin/main` (en la 1.1.0, `master`).
+- **Formato de fecha personalizado en el Log.** *Date format* tiene una tercera opción, *Custom pattern* (`jbGit.dateFormat` = `custom`), que muestra la fecha de los commits con el patrón de `jbGit.dateFormatPattern` (por defecto `dd/MM/yyyy HH:mm`), con las letras de JetBrains / Java: `yyyy-MM-dd HH:mm`, `EEE d MMM, HH:mm`, `dd/MM/yy h:mm a`… Los nombres de mes y de día salen en el idioma de VS Code, el texto entre comillas simples sale tal cual y la columna *Date* se ajusta al ancho de la fecha más larga. Se elige en *Settings ▸ Log ▸ Graph*, con la vista previa del log debajo.
+
+### Cambiado
+
+- **La fecha absoluta de los commits, siempre `dd/MM/yyyy, HH:mm`.** Seguía el idioma de VS Code, así que en inglés de EE. UU. salía con el mes primero y en 12 horas (`11/26/2026, 06:40 PM`) aunque *Date format* dijera *Absolute (17/11/2026, 12:49)*. Ahora es siempre día, mes, año y hora de 24 horas (`26/11/2026, 18:40`) en el Log, la ventana de Push y Compare / Show History, y el ejemplo de la opción se genera con el mismo formato. El panel de detalles del commit (con el nombre del mes) también va en 24 horas. Para otro orden, *Custom pattern*.
+
 ## [1.1.0] - 2026-11-27
 
 ### Añadido

@@ -184,6 +184,22 @@
           "default": true,
           "description": "Añade al stage automáticamente los cambios de archivos con seguimiento, como JetBrains incluye todos los cambios en el commit. Los que se quitan con «−» se quedan fuera hasta que se vuelvan a añadir. Los archivos sin seguimiento no se añaden solos."
         },
+        "jbGit.graphPinBranch": {
+          "type": "boolean",
+          "default": true,
+          "description": "Fija la línea de una rama (la primera de jbGit.graphPinnedBranch que exista) en la columna de la izquierda del grafo del log, aunque haya ramas más recientes. Desactivado, cada rama toma el primer carril libre por orden de aparición."
+        },
+        "jbGit.graphPinnedBranch": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "main",
+            "master"
+          ],
+          "description": "Ramas que pueden ir en la columna de la izquierda del grafo, de más a menos prioridad, sin el remoto (p. ej. [\"develop\", \"main\"]). En cada repo se fija la línea (la cadena de primeros padres) de la primera que exista, la local o, si no hay, la del remoto por defecto; manda el orden de la lista, aunque la rama solo esté en el remoto. Si no existe ninguna, o la lista está vacía, no se fija ninguna. Solo se aplica con jbGit.graphPinBranch activado."
+        },
         "jbGit.protectedBranches": {
           "type": "array",
           "items": {
@@ -246,10 +262,21 @@
           "type": "string",
           "enum": [
             "relative",
-            "absolute"
+            "absolute",
+            "custom"
+          ],
+          "enumDescriptions": [
+            "Hace cuánto (hace 2 horas); a partir de 30 días, la fecha absoluta.",
+            "Día, mes, año y hora (17/11/2026, 12:49).",
+            "Con el patrón de jbGit.dateFormatPattern."
           ],
           "default": "absolute",
           "description": "Formato de la fecha en la tabla de commits."
+        },
+        "jbGit.dateFormatPattern": {
+          "type": "string",
+          "default": "dd/MM/yyyy HH:mm",
+          "description": "Patrón de la fecha de los commits con jbGit.dateFormat = custom, con las letras de JetBrains / Java: yyyy / yy (año), MMMM / MMM / MM / M (mes: nombre, abreviado, con dos cifras o sin cero), dd / d (día), EEEE / EEE (día de la semana), HH / H (hora 0–23), hh / h (hora 1–12), mm (minutos), ss (segundos), a (AM / PM). El texto entre comillas simples sale tal cual ('a las' → a las). P. ej. «yyyy-MM-dd HH:mm» o «EEE d MMM, HH:mm»."
         }
       }
     }

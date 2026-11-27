@@ -1212,3 +1212,89 @@ describe('tipos de mensaje (docs/messages.md ↔ código)', () => {
     assert.deepEqual(minus(dlgSends, handled), []);
   });
 });
+
+describe('formatDate del log (jbGit.dateFormat)', () => {
+  // media/dateformat.js de verdad, como lo carga el webview antes que main.js, dialog.js y compare.js
+  const DATES = (() => { const w: any = {}; new Function('window', read('media/dateformat.js'))(w); return w.jbDateFormat; })();
+  const make = (data: unknown, jbDateFormat: unknown = DATES) =>
+    sandbox(MAIN, ['formatDate'], { data, jbDateFormat, DEFAULT_DATE_PATTERN: 'dd/MM/yyyy HH:mm', relativeFormat: undefined });
+  const t = new Date(2026, 8, 9, 8, 5).getTime() / 1000;
+
+  test('custom: el patrón de los datos, o el que se pase (vista previa de Settings)', () => {
+    const calls: unknown[][] = [];
+    const fd = make({ dateFormat: 'custom', dateFormatPattern: 'yyyy' }, { format: (p: string, d: Date) => { calls.push([p, d.getTime()]); return `[${p}]`; } });
+    assert.equal(fd.formatDate(t), '[yyyy]');
+    assert.deepEqual(calls[0], ['yyyy', t * 1000]);
+    assert.equal(fd.formatDate(t, 'custom', 'HH:mm'), '[HH:mm]');
+  });
+
+  test('custom sin patrón: el de por defecto', () => {
+    const fd = make({ dateFormat: 'custom', dateFormatPattern: '' }, { format: (p: string) => p });
+    assert.equal(fd.formatDate(t), 'dd/MM/yyyy HH:mm');
+  });
+
+  test('absolute (y sin datos) no usa el patrón', () => {
+    const fd = make({ dateFormat: 'absolute', dateFormatPattern: 'yyyy' }, { ...DATES, format: () => assert.fail('no debía usar el patrón') });
+    assert.equal(fd.formatDate(t), '09/09/2026, 08:05');
+    assert.equal(make(null).formatDate(t), '09/09/2026, 08:05');
+  });
+
+  test('absolute: siempre dd/MM/yyyy, HH:mm (día primero, 24 horas), sea cual sea el idioma', () => {
+    const fd = make({ dateFormat: 'absolute' });
+    assert.equal(fd.formatDate(new Date(2026, 10, 26, 18, 40).getTime() / 1000), '26/11/2026, 18:40');
+    assert.equal(fd.formatDate(new Date(2026, 11, 28, 22, 58).getTime() / 1000), '28/12/2026, 22:58');
+    assert.equal(fd.formatDate(new Date(2026, 0, 1, 0, 5).getTime() / 1000), '01/01/2026, 00:05');
+  });
+
+  test('relative: hace poco, en el idioma; a partir de 30 días, la absoluta', () => {
+    const fd = make({ dateFormat: 'relative' });
+    const now = Date.now() / 1000;
+    assert.equal(fd.formatDate(now - 2 * 3600), new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' }).format(-2, 'hour'));
+    assert.equal(fd.formatDate(t), '09/09/2026, 08:05');
+  });
+
+  // Un idioma de mentira en el que la fecha más larga es la de un lunes de octubre (como
+  // «poniedziałek … październik» en polaco), que no es ninguna de las fechas fijas
+  const width = (measured: string[] = []) => {
+    const longest = 'x'.repeat(40);
+    const jbDateFormat = { format: (_p: string, d: Date) => (d.getMonth() === 9 && d.getDay() === 1 ? longest : 'x') };
+    const ctx = { font: '', measureText: (s: string) => { measured.push(s); return { width: s.length }; } };
+    return sandbox(MAIN, ['dateColumnWidth', 'formatDate'], {
+      data: { dateFormat: 'custom', dateFormatPattern: 'EEEE d MMMM' }, jbDateFormat, DEFAULT_DATE_PATTERN: 'dd/MM/yyyy HH:mm', FS: 13,
+      relativeFormat: undefined, dateCtx: undefined, dateWidths: new Map(),
+      document: { createElement: () => ({ getContext: () => ctx }), body: {} },
+      getComputedStyle: () => ({ fontFamily: 'x' }),
+    });
+  };
+
+  test('columna Date con patrón: mide todos los meses con todos los días de la semana', () => {
+    assert.equal(width().dateColumnWidth(), 40 + 22);
+  });
+
+  test('columna Date: con el mismo formato y la misma letra no se vuelve a medir', () => {
+    const measured: string[] = [];
+    const fd = width(measured);
+    const first = fd.dateColumnWidth();
+    const n = measured.length;
+    assert.ok(n > 0);
+    assert.equal(fd.dateColumnWidth(), first);
+    assert.equal(measured.length, n, 'la segunda vez sale de la caché');
+    fd.dateColumnWidth('custom', 'd/M');
+    assert.ok(measured.length > n, 'con otro patrón sí se mide');
+  });
+
+  test('Push y Compare: la fecha absoluta de dateformat.js, como el Log', () => {
+    for (const file of ['media/dialog.js', 'media/compare.js']) {
+      const fd = sandbox(read(file), ['formatDate'], { jbDateFormat: DATES });
+      assert.equal(fd.formatDate(new Date(2026, 10, 26, 18, 40).getTime() / 1000), '26/11/2026, 18:40', file);
+    }
+  });
+
+  test('Push y Compare cargan dateformat.js antes que su script', () => {
+    for (const file of ['src/dialog.ts', 'src/compare.ts']) {
+      const src = read(file);
+      assert.match(src, /joinPath\(media, 'dateformat\.js'\)/, file);
+      assert.ok(src.indexOf('src="${dates}"') < src.indexOf('src="${js}"'), file);
+    }
+  });
+});

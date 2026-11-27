@@ -78,6 +78,14 @@ export function scanDepth(c: ConfigLike): number {
   return Number.isFinite(n) ? Math.min(MAX_SCAN_DEPTH, Math.max(0, n)) : 2;
 }
 
+/** Patrón de la fecha por defecto con jbGit.dateFormat = custom (como en package.json). */
+export const DEFAULT_DATE_PATTERN = 'dd/MM/yyyy HH:mm';
+
+/** jbGit.dateFormatPattern limpio; si se escribió a mano un valor que no vale, el de por defecto. */
+export function datePattern(c: ConfigLike): string {
+  return SETTING_VALIDATORS.dateFormatPattern(c.get<unknown>('dateFormatPattern', DEFAULT_DATE_PATTERN)) ?? DEFAULT_DATE_PATTERN;
+}
+
 export function commitsPerPage(c: ConfigLike): number {
   const n = Math.round(Number(c.get<number>('maxCommits', 1000)));
   return Number.isFinite(n) ? Math.min(MAX_COMMITS_PAGE, Math.max(100, n)) : 1000;
@@ -98,22 +106,49 @@ export function mergeArgs(options: unknown, message: unknown): string[] {
   return args;
 }
 
-/** Las ramas principales, por orden de preferencia (como MAIN_BRANCHES de media/main.js). */
-export const MAIN_BRANCHES = ['main', 'master'];
+/** Ramas que se fijan a la izquierda del grafo por defecto (jbGit.graphPinnedBranch). */
+export const DEFAULT_PINNED_BRANCHES = ['main', 'master'];
 
 /**
- * La rama principal de un repo: la local `main` o, si no, `master`; y si no hay ninguna local, la
- * de su remoto por defecto. El grafo del Log deja su línea en el carril de la izquierda.
+ * Lista de nombres de un ajuste (jbGit.protectedBranches, jbGit.graphPinnedBranch): sin espacios
+ * alrededor, sin vacíos ni repetidos y en su orden; undefined si no es una lista de textos.
  */
-export function pickMainRef<R extends { type: string; name: string; remote?: string; branch?: string }>(refs: R[], remote?: string): R | undefined {
-  for (const n of MAIN_BRANCHES) {
-    const local = refs.find(r => r.type === 'local' && r.name === n);
-    if (local) { return local; }
-  }
+export function stringList(v: unknown): string[] | undefined {
+  return Array.isArray(v) && v.every(x => typeof x === 'string')
+    ? [...new Set(v.map((x: string) => x.trim()).filter(Boolean))] : undefined;
+}
+
+/** Rama válida para jbGit.graphPinnedBranch: un nombre sin espacios (sin el remoto). */
+const validPinName = (x: string) => /^\S{1,250}$/.test(x);
+
+/**
+ * Las ramas que pueden fijar su línea en el carril 0 del grafo, de más a menos prioridad
+ * (jbGit.graphPinnedBranch, «main, master» por defecto). Desactivado (jbGit.graphPinBranch) o
+ * sin ninguna, ninguna: los carriles se reparten por orden de aparición.
+ */
+export function pinnedBranchNames(c: ConfigLike): string[] {
+  return c.get<unknown>('graphPinBranch', true) === false ? [] : pinnedBranchList(c);
+}
+
+/**
+ * jbGit.graphPinnedBranch como lista limpia, aunque esté desactivado: la que se usa y la que
+ * enseña la pestaña Settings. Un valor escrito a mano que no sea una lista de textos cuenta como
+ * vacía, así nadie más tiene que comprobarlo.
+ */
+export function pinnedBranchList(c: ConfigLike): string[] {
+  return (stringList(c.get<unknown>('graphPinnedBranch', DEFAULT_PINNED_BRANCHES)) ?? []).filter(validPinName);
+}
+
+/**
+ * La rama fijada de un repo: la primera de `names` que exista en él, la local o, si no hay, la de
+ * su remoto por defecto. El grafo del Log deja su línea en el carril de la izquierda.
+ */
+export function pickPinnedRef<R extends { type: string; name: string; remote?: string; branch?: string }>(refs: R[], remote: string | undefined, names: string[]): R | undefined {
   const nameOf = (r: R) => r.branch ?? r.name.slice(r.name.indexOf('/') + 1);
-  for (const n of MAIN_BRANCHES) {
-    const remoteRef = refs.find(r => r.type === 'remote' && nameOf(r) === n && (!remote || !r.remote || r.remote === remote));
-    if (remoteRef) { return remoteRef; }
+  for (const n of names) {
+    const ref = refs.find(r => r.type === 'local' && r.name === n)
+      ?? refs.find(r => r.type === 'remote' && nameOf(r) === n && (!remote || !r.remote || r.remote === remote));
+    if (ref) { return ref; }
   }
   return undefined;
 }
@@ -145,12 +180,20 @@ export const validFontSize = (v: unknown) => Number.isInteger(v) && ((v as numbe
  * devuelve el valor normalizado, o undefined si no es válido (y entonces no se guarda nada).
  */
 export const SETTING_VALIDATORS: Record<string, (v: any) => any> = {
-  dateFormat: v => (v === 'relative' || v === 'absolute' ? v : undefined),
+  dateFormat: v => (v === 'relative' || v === 'absolute' || v === 'custom' ? v : undefined),
+  // Patrón de la fecha con dateFormat «custom» (media/dateformat.js): texto de una línea, no vacío
+  dateFormatPattern: v => (typeof v === 'string' && /^[^\x00-\x1f]{1,100}$/.test(v.trim()) ? v.trim() : undefined),
   maxCommits: v => (Number.isInteger(v) && v >= 100 && v <= MAX_COMMITS_PAGE ? v : undefined),
   repositoryScanMaxDepth: v => (Number.isInteger(v) && v >= 0 && v <= MAX_SCAN_DEPTH ? v : undefined),
   autoStage: v => (typeof v === 'boolean' ? v : undefined),
-  protectedBranches: v => (Array.isArray(v) && v.every(x => typeof x === 'string')
-    ? [...new Set(v.map((x: string) => x.trim()).filter(Boolean))] : undefined),
+  graphPinBranch: v => (typeof v === 'boolean' ? v : undefined),
+  // Ramas (sin el remoto) de más a menos prioridad; vacía = no fijar ninguna. Con un nombre con
+  // espacios no se guarda nada (el campo vuelve a su valor)
+  graphPinnedBranch: v => {
+    const names = stringList(v);
+    return names?.every(validPinName) ? names : undefined;
+  },
+  protectedBranches: stringList,
   folderColors: v => {
     if (!v || typeof v !== 'object' || Array.isArray(v)) { return undefined; }
     const out: Record<string, string> = {};

@@ -11,9 +11,10 @@ import { MergePanel } from './merge';
 import { DialogWindow } from './dialog';
 import { fontAttrs, fontSettings } from './fonts';
 import { FileIconsFeed, watchFileIcons } from './fileIcons';
+import { tabIcon } from './tabIcon';
 import {
-  scanDepth, commitsPerPage, mergeArgs, autoBranchColor, DEFAULT_FOLDER_COLORS, validateSetting, mergeLogs,
-  samePath, pathInside, safeRepoPath, nestedRepos, pickMainRef, SerialQueue, Generation, watchSpecs, nonce as newNonce, escAttr,
+  scanDepth, commitsPerPage, datePattern, mergeArgs, autoBranchColor, DEFAULT_FOLDER_COLORS, validateSetting, mergeLogs,
+  samePath, pathInside, safeRepoPath, nestedRepos, pickPinnedRef, pinnedBranchNames, pinnedBranchList, SerialQueue, Generation, watchSpecs, nonce as newNonce, escAttr,
 } from './core';
 
 const SCHEME = 'jbgit';
@@ -338,7 +339,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
     if (this.editor && this.editor !== panel) { panel.dispose(); this.editor.reveal(); return; }
     this.editor = panel;
     const media = this.media();
-    panel.iconPath = vscode.Uri.joinPath(media, 'icon.svg');
+    panel.iconPath = tabIcon(media);
     panel.webview.options = { enableScripts: true, localResourceRoots: [media] };
     this.loadLog(panel.webview);
     panel.webview.onDidReceiveMessage(m => this.route(panel.webview, m));
@@ -585,12 +586,13 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
         const inList = new Set(list.map(c => c.hash));
         list = list.map(c => ({ ...c, parents: c.parents.filter(p => inList.has(p)) }));
       }
-      // La rama principal de cada repo (main o master): su línea va en el carril de la izquierda
-      const mainTips = included.flatMap(r => {
-        const m = pickMainRef(r.refs, r.defaultRemote());
-        return m ? [r.id(m.hash)] : [];
+      // La rama fijada de cada repo (ver pinnedBranchNames): su línea va en el carril de la izquierda
+      const pinNames = pinnedBranchNames(cfg);
+      const pinTips = included.flatMap(r => {
+        const pin = pickPinnedRef(r.refs, r.defaultRemote(), pinNames);
+        return pin ? [r.id(pin.hash)] : [];
       });
-      const graph = computeGraph(list, this.longEdges(), this.branchColorFn(included), mainTips);
+      const graph = computeGraph(list, this.longEdges(), this.branchColorFn(included), pinTips);
       const favs = this.favoriteSets();
       this.post({
         type: 'data',
@@ -625,6 +627,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
         longEdges: this.longEdges(),
         hasMore,
         dateFormat: cfg.get<string>('dateFormat', 'absolute'),
+        dateFormatPattern: datePattern(cfg),
         commits: list.map((c, i) => ({ ...c, g: graph[i] })),
       });
       await this.refreshChanges();
@@ -1747,9 +1750,12 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
       type: 'settings',
       values: {
         dateFormat: c.get<string>('dateFormat', 'absolute'),
+        dateFormatPattern: datePattern(c),
         maxCommits: commitsPerPage(c),
         repositoryScanMaxDepth: scanDepth(c),
         autoStage: c.get<boolean>('autoStage', true),
+        graphPinBranch: c.get<boolean>('graphPinBranch', true),
+        graphPinnedBranch: pinnedBranchList(c),
         protectedBranches: c.get<string[]>('protectedBranches', ['main', 'master']),
         folderColors: c.get<Record<string, string>>('folderColors', DEFAULT_FOLDER_COLORS),
         branchColors: c.get<Record<string, string>>('branchColors', {}),
@@ -2720,6 +2726,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
     const css = webview.asWebviewUri(vscode.Uri.joinPath(media, 'main.css'));
     const js = webview.asWebviewUri(vscode.Uri.joinPath(media, 'main.js'));
     const icons = webview.asWebviewUri(vscode.Uri.joinPath(media, 'fileicons.js'));
+    const dates = webview.asWebviewUri(vscode.Uri.joinPath(media, 'dateformat.js'));
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2810,6 +2817,7 @@ export class GitLogViewProvider implements vscode.WebviewViewProvider, vscode.Di
 </div>
 <div id="menu-root"></div>
 <script nonce="${nonce}" src="${icons}"></script>
+<script nonce="${nonce}" src="${dates}"></script>
 <script nonce="${nonce}" src="${js}"></script>
 </body>
 </html>`;

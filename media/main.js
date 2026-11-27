@@ -4,6 +4,9 @@
   const vscode = acquireVsCodeApi();
   // Iconos de archivos del tema de iconos de VS Code (fileicons.js); sin tema, cada fila usa el suyo de siempre
   const jbFileIcons = /** @type {any} */ (window).jbFileIcons || { html: () => '', apply() { /* nada */ }, setTheme() { /* nada */ } };
+  // Fechas absolutas y con patrón (dateformat.js, cargado antes que este script)
+  const jbDateFormat = /** @type {any} */ (window).jbDateFormat;
+  const DEFAULT_DATE_PATTERN = 'dd/MM/yyyy HH:mm';
 
   // Alto de una fila del log: tamaño de letra + 11 (24 con 13 px); lo recalcula applyFonts
   let ROW_H = 24;
@@ -890,16 +893,40 @@
     $('#btn-details-expand').classList.toggle('hidden', lv.details);
   }
 
-  /** Ancho de la columna Date: lo que mide la fecha más larga posible con la letra actual. */
-  function dateColumnWidth() {
-    const ctx = document.createElement('canvas').getContext('2d');
+  /**
+   * Ancho de la columna Date: lo que mide la fecha más larga posible con la letra actual, con el
+   * formato del log (o el que se pase, para la vista previa de Settings).
+   */
+  function dateColumnWidth(mode = data && data.dateFormat, pattern = data && data.dateFormatPattern) {
+    const ctx = dateCtx ||= document.createElement('canvas').getContext('2d');
     if (!ctx) { return Math.round(130 * FS / 13); }
-    ctx.font = `${FS}px ${getComputedStyle(document.body).fontFamily}`;
+    // Solo cambia con el formato o la letra: se recalcula cuando cambia uno de los dos (en cada
+    // recarga del log y en cada pintado de Settings llega el mismo)
+    const font = `${FS}px ${getComputedStyle(document.body).fontFamily}`;
+    const key = `${mode}|${pattern}|${font}`;
+    const hit = dateWidths.get(key);
+    if (hit !== undefined) { return hit; }
+    ctx.font = font;
     const now = Date.now() / 1000;
-    // Absoluta (dos cifras en todo) o relativa (las más largas: horas y días)
-    const samples = [formatDate(Date.UTC(2026, 11, 28, 22, 58) / 1000), formatDate(now - 23 * 3600), formatDate(now - 28 * 86400), formatDate(now - 50 * 60)];
-    return Math.ceil(Math.max(...samples.map(t => ctx.measureText(t).width))) + 22;   // + padding de la celda
+    // Absoluta (dos cifras en todo, en hora local) y relativa (las más largas: horas y días)
+    const times = [new Date(2026, 11, 28, 22, 58).getTime() / 1000, now - 23 * 3600, now - 28 * 86400, now - 50 * 60];
+    // Con patrón, el mes y el día de la semana más largos dependen del idioma (październik,
+    // poniedziałek, segunda-feira…): los días 22 a 28 de cada mes dan todas las combinaciones de
+    // mes y día de la semana, con el día y la hora a dos cifras
+    if (mode === 'custom') {
+      for (let m = 0; m < 12; m++) {
+        for (let d = 22; d <= 28; d++) { times.push(new Date(2026, m, d, 22, 58, 58).getTime() / 1000); }
+      }
+    }
+    const samples = times.map(t => formatDate(t, mode, pattern));
+    const width = Math.ceil(Math.max(...samples.map(t => ctx.measureText(t).width))) + 22;   // + padding de la celda
+    dateWidths.set(key, width);
+    return width;
   }
+  /** @type {CanvasRenderingContext2D | null | undefined} */
+  let dateCtx;
+  /** Ancho de la columna Date por formato y letra (el del log y el de la vista previa de Settings). */
+  const dateWidths = new Map();
 
   function logViewMenu() {
     const lv = ui.logView;
@@ -933,17 +960,24 @@
     ];
   }
 
-  function formatDate(t) {
+  /**
+   * Fecha de un commit con el formato del log (jbGit.dateFormat: absoluta, relativa o con el patrón
+   * de jbGit.dateFormatPattern), o con el que se pase (la vista previa de Settings).
+   */
+  function formatDate(t, mode = data && data.dateFormat, pattern = data && data.dateFormatPattern) {
     const d = new Date(t * 1000);
-    if (data && data.dateFormat === 'relative') {
+    if (mode === 'custom') { return jbDateFormat.format(pattern || DEFAULT_DATE_PATTERN, d); }
+    if (mode === 'relative') {
       const diff = (Date.now() - d.getTime()) / 1000;
-      const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+      const rtf = relativeFormat ||= new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
       if (diff < 3600) { return rtf.format(-Math.max(1, Math.round(diff / 60)), 'minute'); }
       if (diff < 86400) { return rtf.format(-Math.round(diff / 3600), 'hour'); }
       if (diff < 86400 * 30) { return rtf.format(-Math.round(diff / 86400), 'day'); }
     }
-    return `${d.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit', year: 'numeric' })}, ${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
+    return jbDateFormat.absolute(d);
   }
+  /** @type {Intl.RelativeTimeFormat | undefined} */
+  let relativeFormat;
 
   /** Desplaza el log para que el commit quede en el centro de la vista. */
   // Commit que había que centrar con el log oculto (no tiene alto): se centra al volver a él
@@ -1783,7 +1817,7 @@
     const lines = d.message.split('\n');
     const subject = lines.shift() || '';
     const body = lines.join('\n').replace(/^\n+/, '');
-    const when = t => new Date(t * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    const when = t => new Date(t * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short', hourCycle: 'h23' });
     const short = id => id.replace(/^\d+:/, '').slice(0, 8);
     const parentLinks = d.parents.map(p => `<button class="link-btn hash" data-goto="${p}">${short(p)}</button>`).join(', ');
     const refs = groupedRefs(d.hash);
@@ -3242,15 +3276,7 @@
     const reach = new Set();
     const stack = [0];
     while (stack.length) { const i = stack.pop(); if (!reach.has(i)) { reach.add(i); stack.push(...rows[i].parents); } }
-    const fmt = ago => {
-      const t = (now - ago * 3600) * 1000;
-      if ((s.dateFormat || 'absolute') === 'relative') {
-        const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
-        return ago < 1 ? rtf.format(-Math.round(ago * 60), 'minute') : ago < 24 ? rtf.format(-Math.round(ago), 'hour') : rtf.format(-Math.round(ago / 24), 'day');
-      }
-      const d = new Date(t);
-      return `${d.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit', year: 'numeric' })}, ${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
-    };
+    const fmt = ago => formatDate(now - ago * 3600, s.dateFormat, s.dateFormatPattern);
     const REPOS = ['backend', 'frontend', 'parser'];
     const width = 3;
     const html = rows.map((r, i) => {
@@ -3290,7 +3316,7 @@
     if (lv.author) { cols.push(`minmax(${px(50)}, ${px(96)})`); }
     if (lv.hash) { cols.push(px(66)); }
     // Anchos fijos: cada fila es su propia rejilla y así las columnas quedan alineadas
-    if (lv.date) { cols.push(px(settings && settings.dateFormat === 'relative' ? 108 : 128)); }
+    if (lv.date) { cols.push(`${dateColumnWidth(settings && settings.dateFormat, settings && settings.dateFormatPattern)}px`); }
     box.style.setProperty('--log-cols', cols.join(' '));
     box.style.height = `${8 * ROW_H}px`;
     applyPositions(box);
@@ -3382,7 +3408,11 @@
         `</div>`;
     };
     const num = (key, min, max, step = 1) => `<input type="number" data-cfg="${key}" min="${min}" max="${max}" step="${step}" value="${esc(s[key] ?? CFG_DEFAULTS[key])}">`;
-    const text = (key, placeholder, value = s[key] || '') => `<input type="text" data-cfg="${key}" value="${esc(value)}" placeholder="${esc(placeholder)}" spellcheck="false">`;
+    // Con una lista (protectedBranches…), los nombres separados por comas y data-cfg-list para guardarla como lista
+    const text = (key, placeholder, value = s[key] || '', disabled = false) => {
+      const list = Array.isArray(value);
+      return `<input type="text" data-cfg="${key}"${list ? ' data-cfg-list' : ''} value="${esc(list ? value.join(', ') : value)}" placeholder="${esc(placeholder)}" spellcheck="false"${disabled ? ' disabled' : ''}>`;
+    };
 
     // Opciones del ojo del Log, una tarjeta por cada cabecera del menú
     let logCards = '';
@@ -3435,14 +3465,29 @@
       page('log', '', '') +
       page('branches', '',
         card('Protection',
-          item('Protected branches', 'Comma-separated. Their remote branch shows a lock, can\'t be deleted and can\'t be force-pushed.', text('protectedBranches', 'main, master', (s.protectedBranches || []).join(', ')), 'protectedBranches'))) +
+          item('Protected branches', 'Comma-separated. Their remote branch shows a lock, can\'t be deleted and can\'t be force-pushed.', text('protectedBranches', 'main, master', s.protectedBranches || []), 'protectedBranches'))) +
       page('graph', '',
         // Todas las opciones en una tarjeta a lo ancho, una columna por grupo, y debajo un log de
         // ejemplo que las refleja (logPreviewHtml): así cabe todo sin scroll
         `<div class="set-card lv-card" data-search="log commits columns references highlight graph"><div class="set-card-body lv-cols">` +
           lvCol('Commits',
-            item('Date format', '', `<select class="lv-date" data-cfg="dateFormat" title="How commit dates are shown in the log"><option value="absolute"${s.dateFormat !== 'relative' ? ' selected' : ''}>Absolute (17/11/2026, 12:49)</option><option value="relative"${s.dateFormat === 'relative' ? ' selected' : ''}>Relative (2 hours ago)</option></select>`, 'dateFormat', 'how commit dates are shown absolute relative') +
+            item('Date format', '', `<select class="lv-date" data-cfg="dateFormat" title="How commit dates are shown in the log">` +
+              // El ejemplo de Absolute, con la misma función que pinta el log: así no puede no coincidir
+              [['absolute', `Absolute (${formatDate(new Date(2026, 10, 17, 12, 49).getTime() / 1000, 'absolute')})`], ['relative', 'Relative (2 hours ago)'], ['custom', 'Custom pattern']]
+                .map(([v, label]) => `<option value="${v}"${(s.dateFormat || 'absolute') === v ? ' selected' : ''}>${label}</option>`).join('') +
+              `</select>`, 'dateFormat', 'how commit dates are shown absolute relative custom') +
+            // El patrón, solo con «Custom pattern»
+            (s.dateFormat === 'custom' ? item('Date pattern', '', text('dateFormatPattern', DEFAULT_DATE_PATTERN, s.dateFormatPattern || DEFAULT_DATE_PATTERN), 'dateFormatPattern',
+              'custom date pattern format yyyy MM dd HH mm',
+              'yyyy / yy: year · MMMM / MMM / MM / M: month (name, short name, two digits, number) · dd / d: day\nEEEE / EEE: weekday · HH / H: hour 0-23 · hh / h: hour 1-12 · mm: minutes · ss: seconds · a: AM/PM\nText in single quotes is shown as is (\'at\' → at).\nE.g. yyyy-MM-dd HH:mm or EEE d MMM, HH:mm') : '') +
             item('Commits per page', '', num('maxCommits', 100, 10000, 100), 'maxCommits', 'commits loaded at once load more')) +
+          // Rama fijada en la columna de la izquierda del grafo (jbGit.graphPinBranch / graphPinnedBranch)
+          lvCol('Lanes',
+            checkItem('Pin branch to the left lane', 'The first existing branch of Pinned branches always takes the leftmost column of the graph, even with newer branches. Off: each branch takes the first free lane.',
+              `<input type="checkbox" data-cfg="graphPinBranch"${s.graphPinBranch !== false ? ' checked' : ''}>`, 'graphPinBranch') +
+            item('Pinned branches', '', text('graphPinnedBranch', 'main, master', s.graphPinnedBranch || [], s.graphPinBranch === false),
+              'graphPinnedBranch', 'graph lane column left pin main master',
+              'Comma-separated, highest priority first, without the remote (e.g. develop, main).\nIn each repository the first one that exists is pinned: the local branch, or the default remote\'s one if there is no local branch.\nIf none exists, or the list is empty, no branch is pinned.')) +
           logCards + `</div></div>` +
         logPreviewHtml(s)) +
       page('changes', '',
@@ -3571,8 +3616,10 @@
     { id: 'shortcuts', title: 'Keyboard Shortcuts', icon: 'keyboard' },
   ];
   /** Valores por defecto de los ajustes jbGit.* (los de package.json), para la marca de «modificado». */
-  const CFG_DEFAULTS = { dateFormat: 'absolute', maxCommits: 1000, repositoryScanMaxDepth: 2, autoStage: true, protectedBranches: ['main', 'master'],
-    fontFamily: '', fontSize: 0, tagColor: 'yellow' };
+  const CFG_DEFAULTS = { dateFormat: 'absolute', dateFormatPattern: DEFAULT_DATE_PATTERN, maxCommits: 1000, repositoryScanMaxDepth: 2, autoStage: true, protectedBranches: ['main', 'master'],
+    fontFamily: '', fontSize: 0, tagColor: 'yellow', graphPinBranch: true, graphPinnedBranch: ['main', 'master'] };
+  /** Ajustes jbGit.* de la página Settings ▸ Log ▸ Graph (marca de «modificado» y Reset). */
+  const GRAPH_CFG = ['dateFormat', 'dateFormatPattern', 'maxCommits', 'graphPinBranch', 'graphPinnedBranch'];
   function isModified(key) {
     if (!settings || !(key in CFG_DEFAULTS)) { return false; }
     const v = settings[key] ?? CFG_DEFAULTS[key];
@@ -3626,10 +3673,10 @@
     },
     branches: { modified: () => isModified('protectedBranches'), reset: () => resetCfg('protectedBranches') },
     graph: {
-      modified: () => isModified('dateFormat') || isModified('maxCommits') || !same({ ...LOGVIEW_DEFAULTS, ...ui.logView }, LOGVIEW_DEFAULTS) ||
+      modified: () => GRAPH_CFG.some(isModified) || !same({ ...LOGVIEW_DEFAULTS, ...ui.logView }, LOGVIEW_DEFAULTS) ||
         ui.repoNames || !!(data && (data.firstParent || data.longEdges)),
       reset: () => {
-        resetCfg('dateFormat', 'maxCommits');
+        resetCfg(...GRAPH_CFG);
         ui.logView = { ...LOGVIEW_DEFAULTS, details: ui.logView.details };   // el panel de detalles va con su flecha
         ui.repoNames = false; saveUi();
         applyLogView(); applySearch();
@@ -3933,7 +3980,7 @@
         t.value = String(value);
       }
       else if (key === 'fontSize') { value = Math.round(Number(t.value)); }
-      else if (key === 'protectedBranches') { value = t.value.split(',').map(x => x.trim()).filter(Boolean); }
+      else if (t.dataset.cfgList != null) { value = t.value.split(',').map(x => x.trim()).filter(Boolean); }
       else { value = t.value; }
       vscode.postMessage({ type: 'setSetting', key, value });
       // Las fuentes se ven al momento (la extensión confirma después con «settings»)
