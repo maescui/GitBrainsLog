@@ -17,7 +17,7 @@ Necesitas **VS Code 1.85 o superior** y **Git** en el `PATH`.
 Desde un archivo `.vsix`:
 
 ```bash
-code --install-extension gitbrainslog-1.0.0.vsix
+code --install-extension gitbrainslog-1.1.0.vsix
 ```
 
 o en VS Code: *Extensions ▸ ⋯ ▸ Install from VSIX…*
